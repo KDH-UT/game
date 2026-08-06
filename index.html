@@ -3,25 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>단어 힌트 조별 게임</title>
+  <title>단어 힌트 조별 게임 (검수 기능 포함)</title>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
     body { padding: 20px; background-color: #f4f7f6; text-align: center; color: #333; }
-    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 900px; margin: 0 auto 20px; }
-    button { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; background-color: #4A90E2; color: white; cursor: pointer; margin: 5px; }
+    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 1000px; margin: 0 auto 20px; }
+    button { padding: 10px 18px; font-size: 15px; font-weight: bold; border: none; border-radius: 6px; background-color: #4A90E2; color: white; cursor: pointer; margin: 3px; }
     button:hover { background-color: #357ABD; }
-    input { padding: 12px; font-size: 16px; border: 1px solid #ddd; border-radius: 8px; margin: 5px; width: 80%; max-width: 300px; }
+    .btn-danger { background-color: #d9534f; font-size: 12px; padding: 4px 8px; }
+    .btn-danger:hover { background-color: #c9302c; }
+    input { padding: 10px; font-size: 16px; border: 1px solid #ddd; border-radius: 6px; margin: 5px; width: 80%; max-width: 300px; }
     
-    /* 호스트 UI 전용 */
-    .teams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }
+    /* 호스트 UI */
+    .teams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; margin-top: 15px; }
     .team-card { border: 2px solid #e0e0e0; border-radius: 8px; padding: 10px; background: #fafafa; text-align: left; }
     .team-card h4 { border-bottom: 2px solid #4A90E2; padding-bottom: 5px; margin-bottom: 8px; color: #4A90E2; }
-    .player-item { padding: 4px 0; font-size: 14px; }
+    .player-item { padding: 6px 0; font-size: 14px; border-bottom: 1px dashed #eee; }
     .guesser { color: #d9534f; font-weight: bold; }
-    .word-display { font-size: 32px; font-weight: bold; color: #e67e22; margin: 15px 0; }
+    .hint-badge { display: inline-block; background: #eef6ff; color: #31708f; padding: 2px 6px; border-radius: 4px; font-size: 12px; margin-top: 3px; }
+    .word-display { font-size: 28px; font-weight: bold; color: #e67e22; margin: 15px 0; }
     
-    /* 화면 전환용 */
     .hidden { display: none !important; }
   </style>
 </head>
@@ -37,7 +39,7 @@
 
   <!-- 2. 호스트 화면 -->
   <div id="view-host" class="card hidden">
-    <h2>[호스트] 게임 관리</h2>
+    <h2>[호스트] 게임 및 힌트 검수</h2>
     <div id="host-init">
       <input type="number" id="teams-count" value="4" min="1" max="15" placeholder="조 개수">
       <button onclick="createRoom()">방 만들기</button>
@@ -51,7 +53,7 @@
         <div id="current-word-display" class="word-display"></div>
       </div>
 
-      <h3>조별 현황</h3>
+      <h3>조별 현황 및 힌트 검수</h3>
       <div id="teams-grid" class="teams-grid"></div>
     </div>
   </div>
@@ -74,13 +76,14 @@
         <p>호스트 제시어: <strong id="given-word" style="font-size: 24px; color:#e67e22;">-</strong></p>
         <p style="font-size: 13px; color: #7f8c8d; margin: 10px 0;">1~2개 단어로 출제자에게 줄 힌트를 적으세요.</p>
         <input type="text" id="hint-input" placeholder="힌트 입력 (1~2 단어)"><br>
-        <button onclick="sendHint()">힌트 전송</button>
+        <button id="hint-btn" onclick="sendHint()">힌트 전송</button>
+        <p id="hint-msg" style="color: #d9534f; font-weight: bold; margin-top: 10px;"></p>
       </div>
 
       <!-- 맞추는 사람(출제자) UI -->
       <div id="ui-guesser" class="hidden">
         <p style="color: #d9534f; font-weight: bold;">당신은 문제를 맞추는 사람입니다!</p>
-        <p style="margin-top: 10px;">우리 조원들이 보낸 힌트:</p>
+        <p style="margin-top: 10px;">우리 조원들이 보낸 힌트 목록:</p>
         <div id="hints-list" style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin: 10px 0; min-height: 50px;"></div>
         <input type="text" id="answer-input" placeholder="정답 입력"><br>
         <button onclick="sendAnswer()" style="background-color: #e67e22;">정답 제출</button>
@@ -90,7 +93,7 @@
 
   <script>
     let peer = null;
-    let connections = {}; // socketId -> conn
+    let connections = {};
     let gameState = { teamsCount: 4, teams: {}, players: {} };
 
     function showHostSetup() {
@@ -129,7 +132,6 @@
       if (data.type === 'JOIN') {
         connections[conn.peer] = conn;
         
-        // 인원수가 가장 적은 조로 배정
         let targetTeam = 1;
         let minCount = Infinity;
         for (let i = 1; i <= gameState.teamsCount; i++) {
@@ -148,7 +150,6 @@
       } 
       else if (data.type === 'HINT_SUBMIT') {
         gameState.players[conn.peer].hint = data.hint;
-        // 조 내 맞추는 사람에게 힌트 전달
         broadcastTeamHints(gameState.players[conn.peer].team);
         renderHostGrid();
       }
@@ -158,13 +159,26 @@
       }
     }
 
+    function rejectHint(playerId) {
+      const player = gameState.players[playerId];
+      if (!player) return;
+
+      player.hint = ''; // 힌트 초기화
+      broadcastTeamHints(player.team); // 출제자 화면에서도 삭제 반영
+      renderHostGrid();
+
+      // 플레이어 스마트폰으로 거절 알림 송신
+      if (connections[playerId]) {
+        connections[playerId].send({ type: 'HINT_REJECTED' });
+      }
+    }
+
     function startRound() {
       const word = document.getElementById('target-word').value.trim();
       if (!word) return alert("제시어를 입력하세요!");
 
       document.getElementById('current-word-display').innerText = `현재 제시어: ${word}`;
 
-      // 각 조마다 랜덤 1명 맞추는 사람 선정
       for (let t = 1; t <= gameState.teamsCount; t++) {
         const members = gameState.teams[t];
         if (members.length === 0) continue;
@@ -214,7 +228,11 @@
           const p = gameState.players[id];
           if (p) {
             const role = p.isGuesser ? ' <span class="guesser">[출제자]</span>' : '';
-            const hintTxt = p.hint ? `<br><small style="color:#888;">힌트: ${p.hint}</small>` : '';
+            let hintTxt = '';
+            if (p.hint) {
+              hintTxt = `<br><span class="hint-badge">힌트: ${p.hint}</span> 
+                         <button class="btn-danger" onclick="rejectHint('${id}')">반려</button>`;
+            }
             const ansTxt = p.answer ? `<br><small style="color:#e67e22; font-weight:bold;">정답제출: ${p.answer}</small>` : '';
             html += `<div class="player-item">• ${p.name}${role}${hintTxt}${ansTxt}</div>`;
           }
@@ -252,6 +270,8 @@
             document.getElementById('ui-guesser').classList.add('hidden');
             document.getElementById('hint-input').value = '';
             document.getElementById('answer-input').value = '';
+            document.getElementById('hint-msg').innerText = '';
+            document.getElementById('hint-btn').disabled = false;
 
             if (data.isGuesser) {
               document.getElementById('role-badge').innerText = "🎯 당신은 문제를 맞추는 사람입니다!";
@@ -267,6 +287,11 @@
             const list = document.getElementById('hints-list');
             list.innerHTML = data.hints.map(h => `<div style="padding: 3px 0;">${h}</div>`).join('') || '<i>아직 입력된 힌트가 없습니다.</i>';
           }
+          else if (data.type === 'HINT_REJECTED') {
+            document.getElementById('hint-msg').innerText = "⚠️ 작성한 힌트가 호스트에 의해 반려되었습니다. 다시 작성해주세요!";
+            document.getElementById('hint-input').value = '';
+            document.getElementById('hint-btn').disabled = false;
+          }
         });
       });
     }
@@ -275,12 +300,11 @@
       const hint = document.getElementById('hint-input').value.trim();
       if (!hint) return alert("힌트를 입력하세요.");
       
-      // 1~2개 단어 제한 검사
       const wordCount = hint.split(/\s+/).length;
       if (wordCount > 2) return alert("힌트는 최대 2개 단어까지만 입력 가능합니다!");
 
       myConn.send({ type: 'HINT_SUBMIT', hint: hint });
-      alert("힌트 전송 완료!");
+      document.getElementById('hint-msg').innerText = "호스트 검수 및 전송 완료!";
     }
 
     function sendAnswer() {
