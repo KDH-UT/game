@@ -3,138 +3,291 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>60명 조 배정 게임</title>
-  <!-- 안정적인 최신 PeerJS CDN 사용 -->
+  <title>단어 힌트 조별 게임</title>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 20px; }
-    button { padding: 12px 24px; font-size: 16px; margin: 10px; cursor: pointer; }
-    input { padding: 10px; font-size: 16px; margin: 5px; }
-    .team-box { border: 1px solid #ccc; margin: 5px; padding: 10px; display: inline-block; width: 100px; }
-    #status { color: blue; font-weight: bold; margin: 10px 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+    body { padding: 20px; background-color: #f4f7f6; text-align: center; color: #333; }
+    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 900px; margin: 0 auto 20px; }
+    button { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; background-color: #4A90E2; color: white; cursor: pointer; margin: 5px; }
+    button:hover { background-color: #357ABD; }
+    input { padding: 12px; font-size: 16px; border: 1px solid #ddd; border-radius: 8px; margin: 5px; width: 80%; max-width: 300px; }
+    
+    /* 호스트 UI 전용 */
+    .teams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }
+    .team-card { border: 2px solid #e0e0e0; border-radius: 8px; padding: 10px; background: #fafafa; text-align: left; }
+    .team-card h4 { border-bottom: 2px solid #4A90E2; padding-bottom: 5px; margin-bottom: 8px; color: #4A90E2; }
+    .player-item { padding: 4px 0; font-size: 14px; }
+    .guesser { color: #d9534f; font-weight: bold; }
+    .word-display { font-size: 32px; font-weight: bold; color: #e67e22; margin: 15px 0; }
+    
+    /* 화면 전환용 */
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <h1>실시간 조 배정 (무설치)</h1>
-  <div id="status">상태: 대기 중</div>
 
-  <!-- PC 메인 화면 -->
-  <div id="host-view">
-    <h3>[PC 화면] 방 만들기</h3>
-    <input type="number" id="teams-count" value="4" min="1" max="10">
-    <button onclick="createRoom()">방 생성</button>
-    <h2 id="room-id-display"></h2>
-    <div id="teams-display"></div>
+  <!-- 1. 메인 선택 화면 -->
+  <div id="view-select" class="card">
+    <h1>실시간 단어 힌트 게임</h1>
+    <p style="margin: 15px 0;">역할을 선택하세요</p>
+    <button onclick="showHostSetup()">호스트 (PC/빔프로젝터용)</button>
+    <button onclick="showPlayerSetup()" style="background-color: #2ECC71;">참가자 (스마트폰용)</button>
   </div>
 
-  <hr>
+  <!-- 2. 호스트 화면 -->
+  <div id="view-host" class="card hidden">
+    <h2>[호스트] 게임 관리</h2>
+    <div id="host-init">
+      <input type="number" id="teams-count" value="4" min="1" max="15" placeholder="조 개수">
+      <button onclick="createRoom()">방 만들기</button>
+    </div>
+    <div id="host-dashboard" class="hidden">
+      <h2 id="room-code-txt" style="color:#2C3E50; margin:10px 0;"></h2>
+      
+      <div style="margin: 20px 0; padding: 15px; background: #eef6ff; border-radius: 8px;">
+        <input type="text" id="target-word" placeholder="제시어 입력 (예: 바나나)">
+        <button onclick="startRound()" style="background-color: #e67e22;">라운드 시작 (제시어 전송)</button>
+        <div id="current-word-display" class="word-display"></div>
+      </div>
 
-  <!-- 스마트폰 접속 화면 -->
-  <div id="player-view">
-    <h3>[스마트폰] 참가하기</h3>
-    <input type="text" id="room-code" placeholder="방 코드 입력 (예: room-1234)"><br>
-    <input type="text" id="nickname" placeholder="닉네임 입력"><br>
-    <button onclick="joinRoom()">참가</button>
-    <h2 id="my-team"></h2>
+      <h3>조별 현황</h3>
+      <div id="teams-grid" class="teams-grid"></div>
+    </div>
+  </div>
+
+  <!-- 3. 참가자(스마트폰) 화면 -->
+  <div id="view-player" class="card hidden">
+    <h2>[스마트폰] 게임 참가</h2>
+    <div id="player-login">
+      <input type="text" id="room-code" placeholder="방 코드 (예: ROOM-1234)"><br>
+      <input type="text" id="nickname" placeholder="닉네임 입력"><br>
+      <button onclick="joinRoom()" style="background-color: #2ECC71;">접속하기</button>
+    </div>
+
+    <div id="player-game" class="hidden">
+      <h3 id="my-info" style="color:#7F8C8D;"></h3>
+      <h2 id="role-badge" style="margin: 15px 0;"></h2>
+      
+      <!-- 힌트 제공자 UI -->
+      <div id="ui-giver" class="hidden">
+        <p>호스트 제시어: <strong id="given-word" style="font-size: 24px; color:#e67e22;">-</strong></p>
+        <p style="font-size: 13px; color: #7f8c8d; margin: 10px 0;">1~2개 단어로 출제자에게 줄 힌트를 적으세요.</p>
+        <input type="text" id="hint-input" placeholder="힌트 입력 (1~2 단어)"><br>
+        <button onclick="sendHint()">힌트 전송</button>
+      </div>
+
+      <!-- 맞추는 사람(출제자) UI -->
+      <div id="ui-guesser" class="hidden">
+        <p style="color: #d9534f; font-weight: bold;">당신은 문제를 맞추는 사람입니다!</p>
+        <p style="margin-top: 10px;">우리 조원들이 보낸 힌트:</p>
+        <div id="hints-list" style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin: 10px 0; min-height: 50px;"></div>
+        <input type="text" id="answer-input" placeholder="정답 입력"><br>
+        <button onclick="sendAnswer()" style="background-color: #e67e22;">정답 제출</button>
+      </div>
+    </div>
   </div>
 
   <script>
     let peer = null;
-    let teamsCount = 4;
-    let teams = {};
+    let connections = {}; // socketId -> conn
+    let gameState = { teamsCount: 4, teams: {}, players: {} };
 
-    function setStatus(msg) {
-      document.getElementById('status').innerText = "상태: " + msg;
+    function showHostSetup() {
+      document.getElementById('view-select').classList.add('hidden');
+      document.getElementById('view-host').classList.remove('hidden');
     }
 
-    // 1. PC: 방 생성
+    function showPlayerSetup() {
+      document.getElementById('view-select').classList.add('hidden');
+      document.getElementById('view-player').classList.remove('hidden');
+    }
+
+    // --- [호스트 로직] ---
     function createRoom() {
-      setStatus("방 생성 중...");
-      teamsCount = parseInt(document.getElementById('teams-count').value);
-      for(let i=1; i<=teamsCount; i++) teams[i] = [];
-      
-      const roomId = 'room-' + Math.floor(1000 + Math.random() * 9000);
-      
-      // PeerJS 옵션 추가 (안정성 강화)
-      peer = new Peer(roomId, { debug: 2 });
+      const count = parseInt(document.getElementById('teams-count').value);
+      gameState.teamsCount = count;
+      for(let i=1; i<=count; i++) gameState.teams[i] = [];
+
+      const roomId = 'ROOM-' + Math.floor(1000 + Math.random() * 9000);
+      peer = new Peer(roomId);
 
       peer.on('open', (id) => {
-        document.getElementById('room-id-display').innerText = `방 코드: ${id}`;
-        setStatus(`방이 생성되었습니다! (${id})`);
-        updateHostUI();
+        document.getElementById('host-init').classList.add('hidden');
+        document.getElementById('host-dashboard').classList.remove('hidden');
+        document.getElementById('room-code-txt').innerText = `방 코드: ${id}`;
+        renderHostGrid();
       });
 
       peer.on('connection', (conn) => {
-        conn.on('data', (data) => {
-          if (data.type === 'join') {
-            let targetTeam = 1;
-            let minCount = Infinity;
-            for (let i = 1; i <= teamsCount; i++) {
-              if (teams[i].length < minCount) {
-                minCount = teams[i].length;
-                targetTeam = i;
-              }
-            }
-            teams[targetTeam].push(data.nickname);
-            conn.send({ type: 'assigned', team: targetTeam });
-            updateHostUI();
-          }
-        });
-      });
-
-      peer.on('error', (err) => {
-        setStatus("오류 발생: " + err.type);
+        conn.on('data', (data) => handleHostData(conn, data));
+        conn.on('close', () => removePlayer(conn.peer));
       });
     }
 
-    // 2. 스마트폰: 참가
-    function joinRoom() {
-      const code = document.getElementById('room-code').value.trim();
-      const name = document.getElementById('nickname').value.trim() || '참가자';
+    function handleHostData(conn, data) {
+      if (data.type === 'JOIN') {
+        connections[conn.peer] = conn;
+        
+        // 인원수가 가장 적은 조로 배정
+        let targetTeam = 1;
+        let minCount = Infinity;
+        for (let i = 1; i <= gameState.teamsCount; i++) {
+          if (gameState.teams[i].length < minCount) {
+            minCount = gameState.teams[i].length;
+            targetTeam = i;
+          }
+        }
 
-      if(!code) {
-        alert("방 코드를 입력해주세요!");
-        return;
+        const playerInfo = { id: conn.peer, name: data.name, team: targetTeam, isGuesser: false, hint: '', answer: '' };
+        gameState.players[conn.peer] = playerInfo;
+        gameState.teams[targetTeam].push(conn.peer);
+
+        conn.send({ type: 'INIT_ACK', team: targetTeam, name: data.name });
+        renderHostGrid();
+      } 
+      else if (data.type === 'HINT_SUBMIT') {
+        gameState.players[conn.peer].hint = data.hint;
+        // 조 내 맞추는 사람에게 힌트 전달
+        broadcastTeamHints(gameState.players[conn.peer].team);
+        renderHostGrid();
       }
-
-      setStatus("방 연결 시도 중...");
-
-      peer = new Peer({ debug: 2 });
-
-      peer.on('open', () => {
-        const conn = peer.connect(code);
-
-        conn.on('open', () => {
-          setStatus("연결 성공! 조 배정 요청 중...");
-          conn.send({ type: 'join', nickname: name });
-        });
-
-        conn.on('data', (data) => {
-          if (data.type === 'assigned') {
-            setStatus("배정 완료!");
-            document.getElementById('my-team').innerText = `당신은 [ ${data.team} 조 ] 입니다!`;
-          }
-        });
-
-        conn.on('error', (err) => {
-          setStatus("연결 에러 발생");
-        });
-      });
-
-      peer.on('error', (err) => {
-        setStatus("접속 에러: " + err.type + " (방 코드를 확인하세요)");
-      });
+      else if (data.type === 'ANSWER_SUBMIT') {
+        gameState.players[conn.peer].answer = data.answer;
+        renderHostGrid();
+      }
     }
 
-    function updateHostUI() {
-      const display = document.getElementById('teams-display');
-      display.innerHTML = '';
-      for (let i = 1; i <= teamsCount; i++) {
-        let html = `<div class="team-box"><h4>${i}조 (${teams[i].length}명)</h4>`;
-        teams[i].forEach(name => { html += `<p>${name}</p>`; });
+    function startRound() {
+      const word = document.getElementById('target-word').value.trim();
+      if (!word) return alert("제시어를 입력하세요!");
+
+      document.getElementById('current-word-display').innerText = `현재 제시어: ${word}`;
+
+      // 각 조마다 랜덤 1명 맞추는 사람 선정
+      for (let t = 1; t <= gameState.teamsCount; t++) {
+        const members = gameState.teams[t];
+        if (members.length === 0) continue;
+
+        const guesserIndex = Math.floor(Math.random() * members.length);
+        members.forEach((id, idx) => {
+          const isGuesser = (idx === guesserIndex);
+          gameState.players[id].isGuesser = isGuesser;
+          gameState.players[id].hint = '';
+          gameState.players[id].answer = '';
+
+          if (connections[id]) {
+            connections[id].send({
+              type: 'ROUND_START',
+              word: isGuesser ? '???' : word,
+              isGuesser: isGuesser
+            });
+          }
+        });
+      }
+      renderHostGrid();
+    }
+
+    function broadcastTeamHints(teamId) {
+      const members = gameState.teams[teamId];
+      const guesserId = members.find(id => gameState.players[id].isGuesser);
+      if (!guesserId) return;
+
+      const hints = members
+        .filter(id => !gameState.players[id].isGuesser && gameState.players[id].hint)
+        .map(id => `${gameState.players[id].name}: ${gameState.players[id].hint}`);
+
+      if (connections[guesserId]) {
+        connections[guesserId].send({ type: 'HINTS_UPDATE', hints: hints });
+      }
+    }
+
+    function renderHostGrid() {
+      const grid = document.getElementById('teams-grid');
+      grid.innerHTML = '';
+
+      for (let i = 1; i <= gameState.teamsCount; i++) {
+        const members = gameState.teams[i] || [];
+        let html = `<div class="team-card"><h4>${i}조 (${members.length}명)</h4>`;
+        
+        members.forEach(id => {
+          const p = gameState.players[id];
+          if (p) {
+            const role = p.isGuesser ? ' <span class="guesser">[출제자]</span>' : '';
+            const hintTxt = p.hint ? `<br><small style="color:#888;">힌트: ${p.hint}</small>` : '';
+            const ansTxt = p.answer ? `<br><small style="color:#e67e22; font-weight:bold;">정답제출: ${p.answer}</small>` : '';
+            html += `<div class="player-item">• ${p.name}${role}${hintTxt}${ansTxt}</div>`;
+          }
+        });
         html += `</div>`;
-        display.innerHTML += html;
+        grid.innerHTML += html;
       }
+    }
+
+    // --- [참가자 로직] ---
+    let myConn = null;
+
+    function joinRoom() {
+      const code = document.getElementById('room-code').value.trim().toUpperCase();
+      const name = document.getElementById('nickname').value.trim();
+      if (!code || !name) return alert("방 코드와 닉네임을 모두 입력하세요.");
+
+      peer = new Peer();
+      peer.on('open', () => {
+        myConn = peer.connect(code);
+        
+        myConn.on('open', () => {
+          myConn.send({ type: 'JOIN', name: name });
+        });
+
+        myConn.on('data', (data) => {
+          if (data.type === 'INIT_ACK') {
+            document.getElementById('player-login').classList.add('hidden');
+            document.getElementById('player-game').classList.remove('hidden');
+            document.getElementById('my-info').innerText = `${data.name}님 (${data.team}조)`;
+            document.getElementById('role-badge').innerText = "호스트가 라운드를 시작하길 기다리는 중...";
+          }
+          else if (data.type === 'ROUND_START') {
+            document.getElementById('ui-giver').classList.add('hidden');
+            document.getElementById('ui-guesser').classList.add('hidden');
+            document.getElementById('hint-input').value = '';
+            document.getElementById('answer-input').value = '';
+
+            if (data.isGuesser) {
+              document.getElementById('role-badge').innerText = "🎯 당신은 문제를 맞추는 사람입니다!";
+              document.getElementById('ui-guesser').classList.remove('hidden');
+              document.getElementById('hints-list').innerHTML = '<i>조원들의 힌트를 기다리는 중...</i>';
+            } else {
+              document.getElementById('role-badge').innerText = "💡 힌트를 작성해 주세요!";
+              document.getElementById('given-word').innerText = data.word;
+              document.getElementById('ui-giver').classList.remove('hidden');
+            }
+          }
+          else if (data.type === 'HINTS_UPDATE') {
+            const list = document.getElementById('hints-list');
+            list.innerHTML = data.hints.map(h => `<div style="padding: 3px 0;">${h}</div>`).join('') || '<i>아직 입력된 힌트가 없습니다.</i>';
+          }
+        });
+      });
+    }
+
+    function sendHint() {
+      const hint = document.getElementById('hint-input').value.trim();
+      if (!hint) return alert("힌트를 입력하세요.");
+      
+      // 1~2개 단어 제한 검사
+      const wordCount = hint.split(/\s+/).length;
+      if (wordCount > 2) return alert("힌트는 최대 2개 단어까지만 입력 가능합니다!");
+
+      myConn.send({ type: 'HINT_SUBMIT', hint: hint });
+      alert("힌트 전송 완료!");
+    }
+
+    function sendAnswer() {
+      const ans = document.getElementById('answer-input').value.trim();
+      if (!ans) return alert("정답을 입력하세요.");
+      myConn.send({ type: 'ANSWER_SUBMIT', answer: ans });
+      alert("정답 제출 완료!");
     }
   </script>
 </body>
