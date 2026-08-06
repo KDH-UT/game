@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>60명 조 배정 게임</title>
+  <!-- 안정적인 최신 PeerJS CDN 사용 -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 20px; }
+    button { padding: 12px 24px; font-size: 16px; margin: 10px; cursor: pointer; }
+    input { padding: 10px; font-size: 16px; margin: 5px; }
+    .team-box { border: 1px solid #ccc; margin: 5px; padding: 10px; display: inline-block; width: 100px; }
+    #status { color: blue; font-weight: bold; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>실시간 조 배정 (무설치)</h1>
+  <div id="status">상태: 대기 중</div>
+
+  <!-- PC 메인 화면 -->
+  <div id="host-view">
+    <h3>[PC 화면] 방 만들기</h3>
+    <input type="number" id="teams-count" value="4" min="1" max="10">
+    <button onclick="createRoom()">방 생성</button>
+    <h2 id="room-id-display"></h2>
+    <div id="teams-display"></div>
+  </div>
+
+  <hr>
+
+  <!-- 스마트폰 접속 화면 -->
+  <div id="player-view">
+    <h3>[스마트폰] 참가하기</h3>
+    <input type="text" id="room-code" placeholder="방 코드 입력 (예: room-1234)"><br>
+    <input type="text" id="nickname" placeholder="닉네임 입력"><br>
+    <button onclick="joinRoom()">참가</button>
+    <h2 id="my-team"></h2>
+  </div>
+
+  <script>
+    let peer = null;
+    let teamsCount = 4;
+    let teams = {};
+
+    function setStatus(msg) {
+      document.getElementById('status').innerText = "상태: " + msg;
+    }
+
+    // 1. PC: 방 생성
+    function createRoom() {
+      setStatus("방 생성 중...");
+      teamsCount = parseInt(document.getElementById('teams-count').value);
+      for(let i=1; i<=teamsCount; i++) teams[i] = [];
+      
+      const roomId = 'room-' + Math.floor(1000 + Math.random() * 9000);
+      
+      // PeerJS 옵션 추가 (안정성 강화)
+      peer = new Peer(roomId, { debug: 2 });
+
+      peer.on('open', (id) => {
+        document.getElementById('room-id-display').innerText = `방 코드: ${id}`;
+        setStatus(`방이 생성되었습니다! (${id})`);
+        updateHostUI();
+      });
+
+      peer.on('connection', (conn) => {
+        conn.on('data', (data) => {
+          if (data.type === 'join') {
+            let targetTeam = 1;
+            let minCount = Infinity;
+            for (let i = 1; i <= teamsCount; i++) {
+              if (teams[i].length < minCount) {
+                minCount = teams[i].length;
+                targetTeam = i;
+              }
+            }
+            teams[targetTeam].push(data.nickname);
+            conn.send({ type: 'assigned', team: targetTeam });
+            updateHostUI();
+          }
+        });
+      });
+
+      peer.on('error', (err) => {
+        setStatus("오류 발생: " + err.type);
+      });
+    }
+
+    // 2. 스마트폰: 참가
+    function joinRoom() {
+      const code = document.getElementById('room-code').value.trim();
+      const name = document.getElementById('nickname').value.trim() || '참가자';
+
+      if(!code) {
+        alert("방 코드를 입력해주세요!");
+        return;
+      }
+
+      setStatus("방 연결 시도 중...");
+
+      peer = new Peer({ debug: 2 });
+
+      peer.on('open', () => {
+        const conn = peer.connect(code);
+
+        conn.on('open', () => {
+          setStatus("연결 성공! 조 배정 요청 중...");
+          conn.send({ type: 'join', nickname: name });
+        });
+
+        conn.on('data', (data) => {
+          if (data.type === 'assigned') {
+            setStatus("배정 완료!");
+            document.getElementById('my-team').innerText = `당신은 [ ${data.team} 조 ] 입니다!`;
+          }
+        });
+
+        conn.on('error', (err) => {
+          setStatus("연결 에러 발생");
+        });
+      });
+
+      peer.on('error', (err) => {
+        setStatus("접속 에러: " + err.type + " (방 코드를 확인하세요)");
+      });
+    }
+
+    function updateHostUI() {
+      const display = document.getElementById('teams-display');
+      display.innerHTML = '';
+      for (let i = 1; i <= teamsCount; i++) {
+        let html = `<div class="team-box"><h4>${i}조 (${teams[i].length}명)</h4>`;
+        teams[i].forEach(name => { html += `<p>${name}</p>`; });
+        html += `</div>`;
+        display.innerHTML += html;
+      }
+    }
+  </script>
+</body>
+</html>
