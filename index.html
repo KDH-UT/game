@@ -60,7 +60,7 @@
     .hint-badge.approved { background: #d4edda; color: #155724; }
     .word-display { font-size: 28px; font-weight: bold; color: #e67e22; margin: 15px 0; }
     
-    /* 이미지 스타일 설정 (기존 높이 200px에서 2배인 400px로 확대) */
+    /* 이미지 스타일 설정 (크기 2배 확대 적용됨) */
     .hint-image { max-width: 100%; max-height: 400px; border-radius: 8px; margin: 10px 0; border: 1px solid #ddd; }
 
     .live-score-box { background: #e74c3c; color: white; padding: 12px; border-radius: 8px; font-size: 20px; font-weight: bold; margin: 15px 0; }
@@ -178,7 +178,6 @@
       <!-- 힌트 제공자 UI -->
       <div id="ui-giver" class="hidden">
         <p>호스트 제시어: <strong id="given-word" style="font-size: 24px; color:#e67e22;">-</strong></p>
-        <!-- 리포지터리 내 이미지 영역 (크기가 2배로 커진 컨테이너) -->
         <div id="given-image-container"></div>
         <p style="font-size: 13px; color: #7f8c8d; margin: 10px 0;">1~2개 단어로 출제자에게 줄 힌트를 적으세요.</p>
         <input type="text" id="hint-input" placeholder="힌트 입력 (1~2 단어)"><br>
@@ -204,7 +203,7 @@
   </div>
 
   <script>
-    // --- [문제 데이터 리스트 (예제 및 1~5번 정답/이미지 경로 매핑)] ---
+    // --- [문제 데이터 리스트] ---
     const questionsDatabase = {
       'example': { label: "예제", word: "김동환", image: "images/example.png" },
       1: { label: "1번", word: "사과", image: "images/q1.png" },
@@ -248,7 +247,6 @@
       document.getElementById('view-player').classList.remove('hidden');
     }
 
-    // --- [호스트 문제 선택 로직] ---
     function selectQuestion(qKey) {
       selectedQuestionKey = qKey;
       
@@ -266,7 +264,6 @@
         `선택된 항목 [${qData.label}]: 정답("${qData.word}"), 이미지(${qData.image})`;
     }
 
-    // --- [호스트 로직] ---
     function createRoom() {
       const count = parseInt(document.getElementById('teams-count').value);
       gameState.teamsCount = count;
@@ -653,7 +650,7 @@
           html += `
             <div class="history-item">
               <div>
-                <small style="color:#7f8c8d;">${h.timestamp} | 출제자: ${h.playerName}</small><br>
+                <small style="color:#7f8c8d;">${h.timestamp} | [*]: ${h.playerName}</small><br>
                 제시어: <strong>${h.targetWord}</strong> / 제출: <strong>${h.submittedAnswer}</strong><br>
                 상태: ${statusTxt}
               </div>
@@ -685,7 +682,8 @@
         members.forEach(id => {
           const p = gameState.players[id];
           if (p) {
-            const role = p.isGuesser ? ' <span class="guesser">[출제자]</span>' : '';
+            // [출제자] 문구를 [*]로 변경
+            const role = p.isGuesser ? ' <span class="guesser">[*]</span>' : '';
             const spyTargetInfo = p.targetTeamForSpy ? ` (-> ${p.targetTeamForSpy}조 침투)` : '';
             const spyBadge = p.isSpy ? ` <span class="spy-badge">스파이🕵️${spyTargetInfo}</span>` : '';
             const spyClass = p.isSpy ? ' spy-highlight' : '';
