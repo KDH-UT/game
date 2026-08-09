@@ -3,7 +3,7 @@
 <head> 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>단어 힌트 조별 게임 (타 조 스파이 침투 버전)</title>
+  <title>단어 힌트 조별 게임 (타 조 스파이 침투 버전 - 사전 문제 출제)</title>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
@@ -28,6 +28,14 @@
     .btn-team-select { background-color: #f8f9fa; color: #333; border: 2px solid #4A90E2; padding: 12px; border-radius: 8px; font-size: 15px; cursor: pointer; }
     .btn-team-select.active { background-color: #4A90E2; color: white; }
 
+    /* 문제 선택 버튼 그리드 */
+    .question-grid { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    .btn-question { background-color: #8e44ad; font-size: 15px; padding: 10px 16px; }
+    .btn-question:hover { background-color: #732d91; }
+    .btn-question.selected { background-color: #27ae60; border: 2px solid #fff; }
+    .btn-example { background-color: #16a085; }
+    .btn-example:hover { background-color: #138d75; }
+
     /* 리더보드 스타일 */
     .leaderboard { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 15px 0; background: #2C3E50; padding: 12px; border-radius: 8px; color: white; }
     .leaderboard-item { background: #34495E; padding: 8px 12px; border-radius: 6px; font-weight: bold; font-size: 14px; }
@@ -40,14 +48,10 @@
     .team-card h4 { border-bottom: 2px solid #4A90E2; padding-bottom: 5px; margin-bottom: 8px; color: #4A90E2; display: flex; justify-content: space-between; }
     .player-item { padding: 6px; font-size: 14px; border-bottom: 1px dashed #eee; border-radius: 4px; margin-bottom: 2px; }
     
-    /* 제출 소요 시간 텍스트 스타일 */
     .time-badge { font-size: 12px; color: #8e44ad; font-weight: bold; margin-left: 4px; }
-
-    /* 스파이 하이라이트 스타일 */
     .player-item.spy-highlight { background-color: #fce4ec; border: 1.5px solid #e91e63; color: #c2185b; }
     .spy-badge { background: #e91e63; color: white; font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 4px; }
 
-    /* 옵션 체크박스 컨테이너 */
     .option-box { margin-bottom: 12px; font-size: 16px; font-weight: bold; color: #2c3e50; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
     .option-box input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
 
@@ -55,6 +59,9 @@
     .hint-badge { display: inline-block; background: #fff3cd; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 12px; margin-top: 3px; }
     .hint-badge.approved { background: #d4edda; color: #155724; }
     .word-display { font-size: 28px; font-weight: bold; color: #e67e22; margin: 15px 0; }
+    
+    /* 이미지 스타일 설정 */
+    .hint-image { max-width: 100%; max-height: 200px; border-radius: 8px; margin: 10px 0; border: 1px solid #ddd; }
 
     .live-score-box { background: #e74c3c; color: white; padding: 12px; border-radius: 8px; font-size: 20px; font-weight: bold; margin: 15px 0; }
     .live-score-box span { font-size: 32px; color: #f1c40f; text-shadow: 1px 1px 2px rgba(0,0,0,0.3); }
@@ -81,7 +88,7 @@
 
   <!-- 2. 호스트 화면 -->
   <div id="view-host" class="card hidden">
-    <h2>[호스트] 게임 관리 및 점수 산정</h2>
+    <h2>[호스트] 게임 관리 및 문제 선택</h2>
     <div id="host-init">
       <input type="number" id="teams-count" value="4" min="1" max="15" placeholder="조 개수">
       <button onclick="createRoom()">방 만들기</button>
@@ -102,7 +109,18 @@
           <span>🕵️ 이번 라운드 스파이 포함 (타 조 교란)</span>
         </label>
         
-        <input type="text" id="target-word" placeholder="제시어 입력 (예: 바나나)"><br>
+        <p style="margin-bottom: 8px; font-weight: bold; color: #2c3e50;">출제할 문제 또는 예제를 선택하세요</p>
+        <div class="question-grid">
+          <button class="btn-question btn-example" id="q-btn-example" onclick="selectQuestion('example')">예제</button>
+          <button class="btn-question" id="q-btn-1" onclick="selectQuestion(1)">1번</button>
+          <button class="btn-question" id="q-btn-2" onclick="selectQuestion(2)">2번</button>
+          <button class="btn-question" id="q-btn-3" onclick="selectQuestion(3)">3번</button>
+          <button class="btn-question" id="q-btn-4" onclick="selectQuestion(4)">4번</button>
+          <button class="btn-question" id="q-btn-5" onclick="selectQuestion(5)">5번</button>
+        </div>
+
+        <div id="selected-question-preview" style="margin: 10px 0; font-weight: bold; color: #e67e22;">선택된 문제 없음</div>
+
         <button class="btn-action" onclick="startRound()">1. 라운드 시작 (역할 자동배정)</button>
         <button class="btn-action" style="background-color: #27ae60;" onclick="revealHintsToGuessers()">2. 힌트 일괄 승인 및 공개 (타이머 시작!)</button>
         <div id="current-word-display" class="word-display"></div>
@@ -160,6 +178,8 @@
       <!-- 힌트 제공자 UI -->
       <div id="ui-giver" class="hidden">
         <p>호스트 제시어: <strong id="given-word" style="font-size: 24px; color:#e67e22;">-</strong></p>
+        <!-- 리포지터리 내 이미지 영역 -->
+        <div id="given-image-container"></div>
         <p style="font-size: 13px; color: #7f8c8d; margin: 10px 0;">1~2개 단어로 출제자에게 줄 힌트를 적으세요.</p>
         <input type="text" id="hint-input" placeholder="힌트 입력 (1~2 단어)"><br>
         <button id="hint-btn" onclick="sendHint()">힌트 전송</button>
@@ -184,6 +204,19 @@
   </div>
 
   <script>
+    // --- [문제 데이터 리스트 (예제 및 1~5번 정답/이미지 경로 매핑)] ---
+    // 필요에 따라 각 이미지 경로(예: images/example.png 등)를 리포지터리 파일명에 맞게 변경하세요.
+    const questionsDatabase = {
+      'example': { label: "예제", word: "김동환", image: "images/example.png" },
+      1: { label: "1번", word: "사과", image: "images/q1.png" },
+      2: { label: "2번", word: "CIS", image: "images/q2.png" },
+      3: { label: "3번", word: "bias", image: "images/q3.png" },
+      4: { label: "4번", word: "주석", image: "images/q4.png" },
+      5: { label: "5번", word: "산란", image: "images/q5.png" }
+    };
+
+    let selectedQuestionKey = null;
+
     let peer = null;
     let connections = {};
     let gameState = { 
@@ -195,6 +228,7 @@
       roundStartTime: null,
       startTime: null,
       currentWord: '',
+      currentImage: '',
       allowTeamSwitch: false
     };
 
@@ -213,6 +247,25 @@
     function showPlayerSetup() {
       document.getElementById('view-select').classList.add('hidden');
       document.getElementById('view-player').classList.remove('hidden');
+    }
+
+    // --- [호스트 문제 선택 로직] ---
+    function selectQuestion(qKey) {
+      selectedQuestionKey = qKey;
+      
+      // 버튼 디자인 활성화 상태 업데이트
+      ['example', 1, 2, 3, 4, 5].forEach(key => {
+        const btn = document.getElementById(`q-btn-${key}`);
+        if (key === qKey) {
+          btn.classList.add('selected');
+        } else {
+          btn.classList.remove('selected');
+        }
+      });
+
+      const qData = questionsDatabase[qKey];
+      document.getElementById('selected-question-preview').innerText = 
+        `선택된 항목 [${qData.label}]: 정답("${qData.word}"), 이미지(${qData.image})`;
     }
 
     // --- [호스트 로직] ---
@@ -306,7 +359,7 @@
           team: targetTeam, 
           isGuesser: false, 
           isSpy: false,
-          targetTeamForSpy: null, // 스파이가 교란할 타 조 번호
+          targetTeamForSpy: null, 
           hint: '', 
           hintDuration: null,
           isApproved: false, 
@@ -463,24 +516,26 @@
     }
 
     function startRound() {
-      const word = document.getElementById('target-word').value.trim();
-      if (!word) return alert("제시어를 입력하세요!");
+      if (!selectedQuestionKey || !questionsDatabase[selectedQuestionKey]) {
+        return alert("출제할 문제 또는 예제를 먼저 선택하세요!");
+      }
 
-      const isSpyEnabled = document.getElementById('enable-spy-opt').checked;
-
-      gameState.currentWord = word;
+      const qData = questionsDatabase[selectedQuestionKey];
+      gameState.currentWord = qData.word;
+      gameState.currentImage = qData.image;
       gameState.roundStartTime = Date.now();
       gameState.startTime = null;
-      document.getElementById('current-word-display').innerText = `현재 제시어: ${word}`;
+      
+      document.getElementById('current-word-display').innerText = `현재 출제된 항목 [${qData.label}]: ${qData.word}`;
+
+      const isSpyEnabled = document.getElementById('enable-spy-opt').checked;
 
       for (let t = 1; t <= gameState.teamsCount; t++) {
         const members = gameState.teams[t];
         if (members.length === 0) continue;
 
-        // 1. 문제를 맞출 사람(출제자) 추첨
         const guesserIndex = Math.floor(Math.random() * members.length);
 
-        // 2. 스파이 추첨 (출제자를 제외한 나머지 인원 중에서 선택)
         let spyIndex = -1;
         if (isSpyEnabled && members.length > 1) {
           const candidateIndices = [];
@@ -494,7 +549,6 @@
           const isGuesser = (idx === guesserIndex);
           const isSpy = (idx === spyIndex);
 
-          // 스파이가 공격할 타 조(Target Team) 지정
           let spyTarget = null;
           if (isSpy) {
             const otherTeams = [];
@@ -519,7 +573,8 @@
           if (connections[id]) {
             connections[id].send({
               type: 'ROUND_START',
-              word: isGuesser ? '???' : word,
+              word: isGuesser ? '???' : qData.word,
+              image: isGuesser ? null : qData.image, // 출제자에게는 이미지를 숨김 (맞추는 사람이므로)
               isGuesser: isGuesser,
               isSpy: isSpy
             });
@@ -533,7 +588,6 @@
       const now = Date.now();
       gameState.startTime = now;
 
-      // 승인 안 된 힌트 일괄 승인
       Object.keys(gameState.players).forEach(id => {
         const p = gameState.players[id];
         if (p.hint && !p.isApproved) {
@@ -541,7 +595,6 @@
         }
       });
 
-      // 각 조별로 전달할 힌트 목록 생성 (스파이 힌트 수집 로직)
       for (let targetTeam = 1; targetTeam <= gameState.teamsCount; targetTeam++) {
         const members = gameState.teams[targetTeam];
         const guesserId = members.find(id => gameState.players[id].isGuesser);
@@ -549,7 +602,6 @@
 
         const hintsList = [];
 
-        // 1. 자기 조의 일반 참가자(스파이가 아닌 힌트 작성자) 힌트
         members.forEach(id => {
           const p = gameState.players[id];
           if (!p.isGuesser && !p.isSpy && p.hint && p.isApproved) {
@@ -557,11 +609,10 @@
           }
         });
 
-        // 2. 다른 조에서 현재 조(targetTeam)를 공격 대상으로 지정한 스파이들의 힌트
         Object.keys(gameState.players).forEach(id => {
           const p = gameState.players[id];
           if (p.isSpy && p.targetTeamForSpy === targetTeam && p.hint && p.isApproved) {
-            hintsList.push(`${p.name}: ${p.hint}`); // 스파이 이름 그대로 표시
+            hintsList.push(`${p.name}: ${p.hint}`);
           }
         });
 
@@ -575,7 +626,7 @@
       }
 
       renderHostGrid();
-      alert("모든 힌트가 타 조 스파이 힌트를 포함하여 공개되고 타이머가 시작되었습니다!");
+      alert("모든 힌트가 공개되고 타이머가 시작되었습니다!");
     }
 
     function renderLeaderboard() {
@@ -744,6 +795,15 @@
             } else {
               document.getElementById('role-badge').innerText = "💡 힌트를 작성해 주세요!";
               document.getElementById('given-word').innerText = data.word;
+              
+              // 힌트 제공자에게 이미지 렌더링
+              const imgContainer = document.getElementById('given-image-container');
+              if (data.image) {
+                imgContainer.innerHTML = `<img src="${data.image}" alt="문제 이미지" class="hint-image">`;
+              } else {
+                imgContainer.innerHTML = '';
+              }
+
               document.getElementById('ui-giver').classList.remove('hidden');
             }
           }
