@@ -274,8 +274,11 @@
       }
 
       const roomId = 'ROOM-' + Math.floor(1000 + Math.random() * 9000);
-      peer = new Peer(roomId);
-
+      peer = new Peer(roomId, {
+  host: '0.peerjs.com',
+  port: 443,
+  secure: true
+});
       peer.on('open', (id) => {
         document.getElementById('host-init').classList.add('hidden');
         document.getElementById('host-dashboard').classList.remove('hidden');
@@ -735,7 +738,11 @@
       const name = document.getElementById('nickname').value.trim();
       if (!code || !name) return alert("방 코드와 이름을 모두 입력하세요.");
 
-      peer = new Peer();
+      peer = new Peer({
+  host: '0.peerjs.com',
+  port: 443,
+  secure: true
+});
       peer.on('open', () => {
         myConn = peer.connect(code);
         
