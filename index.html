@@ -3,7 +3,7 @@
 <head> 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>단어 힌트 조별 게임 (마스터 단독 제어 버전)</title>
+  <title>단어 힌트 조별 게임 (마스터 관리 및 익명 힌트 버전)</title>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
@@ -96,6 +96,12 @@
     <div id="host-dashboard">
       <h2 id="room-code-txt" style="color:#2C3E50; margin:10px 0;"></h2>
       
+      <!-- 스마트폰에서만 보이는 마스터 관리 영역 -->
+      <div id="master-manager-box" style="margin: 10px 0; padding: 10px; background: #fff3cd; border-radius: 8px; border: 1px solid #ffeeba;" class="hidden">
+        <h4 style="color: #856404; margin-bottom: 5px;">💻 접속 중인 마스터 관리</h4>
+        <div id="connected-masters-list" style="font-size: 14px; margin-bottom: 5px;">접속한 마스터가 없습니다.</div>
+      </div>
+
       <div style="margin: 10px 0;">
         <button id="toggle-switch-btn" class="btn-toggle" onclick="toggleAllowTeamSwitch()">조 변경 허용: OFF</button>
       </div>
@@ -188,7 +194,7 @@
         <div id="live-score-box" class="live-score-box hidden">
           현재 제출 시 획득 점수: <br><span id="live-score-val">1000</span> 점
         </div>
-        <p style="margin-top: 10px;">호스트가 공개한 힌트 목록:</p>
+        <p style="margin-top: 10px;">호스트가 공개한 힌트 목록 (익명):</p>
         <div id="hints-list" style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin: 10px 0; min-height: 50px;"></div>
         <input type="text" id="answer-input" placeholder="정답 입력"><br>
         <button id="ans-btn" onclick="sendAnswer()" style="background-color: #e67e22;" disabled>정답 제출</button>
@@ -210,9 +216,10 @@
     let selectedQuestionKey = null;
     let peer = null;
     let connections = {}; 
+    let masterConnections = {}; // 다중 마스터 연결 관리용 객체
     let masterConn = null; 
-    let masterConnection = null; // 단일 마스터 중복 접속 차단용 변수
     let isMaster = false;
+    let isPhoneHost = false;
 
     let gameState = { 
       teamsCount: 4, 
@@ -251,6 +258,7 @@
 
     // --- 1. 스마트폰에서 방 생성 ---
     function createRoomAsPhone() {
+      isPhoneHost = true;
       const count = parseInt(document.getElementById('teams-count').value);
       gameState.teamsCount = count;
       for(let i=1; i<=count; i++) {
@@ -271,24 +279,18 @@
         document.getElementById('view-host-setup').classList.add('hidden');
         document.getElementById('view-host').classList.remove('hidden');
         document.getElementById('room-code-txt').innerText = `방 코드: ${id} (이 코드를 컴퓨터/참가자에게 공유하세요)`;
+        document.getElementById('master-manager-box').classList.remove('hidden');
         renderLeaderboard();
         renderHostGrid();
+        renderMasterManagerList();
       });
 
       peer.on('connection', (conn) => {
         conn.on('data', (data) => {
           if (data.type === 'MASTER_LOGIN') {
-            // 이미 마스터가 연결되어 있고 살아있는 경우 무조건 거절
-            if (masterConnection && masterConnection.open) {
-              conn.send({ type: 'MASTER_REJECTED', message: '이미 다른 마스터가 접속해 있습니다!' });
-              setTimeout(() => conn.close(), 100);
-              return;
-            }
-
-            // 첫 마스터 등록
-            masterConnection = conn;
-            masterConn = conn;
+            masterConnections[conn.peer] = { conn: conn, name: data.masterName || '마스터 PC' };
             conn.send({ type: 'MASTER_ACK', gameState: gameState });
+            renderMasterManagerList();
             
             conn.on('data', (masterData) => handleMasterCommand(masterData));
           } else {
@@ -297,13 +299,44 @@
         });
 
         conn.on('close', () => {
-          if (masterConnection && masterConnection.peer === conn.peer) {
-            masterConnection = null;
-            masterConn = null;
+          if (masterConnections[conn.peer]) {
+            delete masterConnections[conn.peer];
+            renderMasterManagerList();
           }
           removePlayerFromTeams(conn.peer);
         });
       });
+    }
+
+    function renderMasterManagerList() {
+      if (!isPhoneHost) return;
+      const container = document.getElementById('connected-masters-list');
+      const keys = Object.keys(masterConnections);
+      if (keys.length === 0) {
+        container.innerHTML = '<span style="color:#7f8c8d;">접속한 마스터가 없습니다.</span>';
+        return;
+      }
+      let html = '';
+      keys.forEach(peerId => {
+        html += `<div style="display: flex; justify-content: space-between; align-items: center; background: white; padding: 5px 8px; border-radius: 4px; margin-bottom: 4px; border: 1px solid #ddd;">
+          <span>💻 마스터 (${peerId.substr(0,6)}...)</span>
+          <button class="btn-danger" style="padding: 2px 6px; font-size: 11px;" onclick="kickMaster('${peerId}')">퇴출</button>
+        </div>`;
+      });
+      container.innerHTML = html;
+    }
+
+    function kickMaster(peerId) {
+      if (masterConnections[peerId]) {
+        masterConnections[peerId].conn.send({ type: 'MASTER_KICKED', message: '방장에 의해 퇴출되었습니다!' });
+        setTimeout(() => {
+          if (masterConnections[peerId]) {
+            masterConnections[peerId].conn.close();
+            delete masterConnections[peerId];
+            renderMasterManagerList();
+          }
+        }, 100);
+      }
     }
 
     // --- 2. 컴퓨터에서 마스터 권한으로 접속 ---
@@ -322,14 +355,15 @@
         masterConn = peer.connect(code);
         
         masterConn.on('open', () => {
-          masterConn.send({ type: 'MASTER_LOGIN' });
+          masterConn.send({ type: 'MASTER_LOGIN', masterName: '마스터PC-' + Math.floor(Math.random()*100) });
         });
 
         masterConn.on('data', (data) => {
-          if (data.type === 'MASTER_REJECTED') {
+          if (data.type === 'MASTER_KICKED') {
             alert(data.message);
             masterConn.close();
             peer.destroy();
+            location.reload();
             return;
           }
           if (data.type === 'MASTER_ACK') {
@@ -380,6 +414,15 @@
     function syncToMaster() {
       if (!isMaster && masterConn && masterConn.open) {
         masterConn.send({ type: 'SYNC_STATE', gameState: gameState });
+      }
+      // 스마트폰 호스트인 경우 연결된 모든 마스터에게 상태 동기화 전송
+      if (isPhoneHost) {
+        Object.keys(masterConnections).forEach(peerId => {
+          const mc = masterConnections[peerId];
+          if (mc && mc.conn && mc.conn.open) {
+            mc.conn.send({ type: 'SYNC_STATE', gameState: gameState });
+          }
+        });
       }
     }
 
@@ -500,12 +543,15 @@
         const hintsList = [];
         members.forEach(id => {
           const p = gameState.players[id];
-          if (!p.isGuesser && !p.isSpy && p.hint && p.isApproved) hintsList.push(`${p.name}: ${p.hint}`);
+          if (!p.isGuesser && !p.isSpy && p.hint && p.isApproved) hintsList.push(p.hint); // 익명 처리 (이름 제외)
         });
         Object.keys(gameState.players).forEach(id => {
           const p = gameState.players[id];
-          if (p.isSpy && p.targetTeamForSpy === targetTeam && p.hint && p.isApproved) hintsList.push(`${p.name}: ${p.hint}`);
+          if (p.isSpy && p.targetTeamForSpy === targetTeam && p.hint && p.isApproved) hintsList.push(p.hint); // 익명 처리 (이름 제외)
         });
+
+        // 힌트 순서를 랜덤하게 섞어 누구 것인지 유추하지 못하도록 함
+        hintsList.sort(() => Math.random() - 0.5);
 
         if (connections[guesserId]) {
           connections[guesserId].send({ type: 'HINTS_REVEALED', hints: hintsList, startTime: now });
@@ -513,7 +559,7 @@
       }
       renderHostGrid();
       syncToMaster();
-      alert("모든 힌트가 공개되고 타이머가 시작되었습니다!");
+      alert("모든 익명 힌트가 공개되고 타이머가 시작되었습니다!");
     }
 
     function broadcastLeaderboard() {
@@ -784,7 +830,7 @@
             if (data.isGuesser) {
               document.getElementById('role-badge').innerText = "🎯 당신은 문제를 맞추는 사람입니다!";
               document.getElementById('ui-guesser').classList.remove('hidden');
-              document.getElementById('hints-list').innerHTML = '<i>호스트가 힌트를 일괄 공개하길 기다리는 중...</i>';
+              document.getElementById('hints-list').innerHTML = '<i>호스트가 익명 힌트를 일괄 공개하길 기다리는 중...</i>';
             } else {
               document.getElementById('role-badge').innerText = "💡 힌트를 작성해 주세요!";
               document.getElementById('given-word').innerText = data.word;
@@ -798,7 +844,8 @@
             isTimerStarted = true;
             timerStartTime = data.startTime || Date.now();
             const list = document.getElementById('hints-list');
-            list.innerHTML = data.hints.map(h => `<div style="padding: 3px 0; font-weight:bold; color:#2980b9;">${h}</div>`).join('') || '<i>제출된 힌트가 없습니다.</i>';
+            // 익명으로 힌트만 출력 (작성자 이름 미표시)
+            list.innerHTML = data.hints.map(h => `<div style="padding: 4px 8px; margin: 3px 0; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-weight:bold; color:#2980b9;">• ${h}</div>`).join('') || '<i>제출된 힌트가 없습니다.</i>';
             document.getElementById('ans-btn').disabled = false;
             startLiveScoreTimer();
           }
@@ -867,7 +914,7 @@
         btn.className = 'btn-team-select';
         btn.innerText = `${i}조 (${teamCounts[i] || 0}명)`;
         btn.onclick = () => selectTeam(i, btn);
-        container.appendChild(btn);
+        container.append(btn);
       }
     }
 
