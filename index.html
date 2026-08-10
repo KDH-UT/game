@@ -3,7 +3,7 @@
 <head> 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>단어 힌트 조별 게임 (마스터 제어 버전)</title>
+  <title>단어 힌트 조별 게임 (마스터 단독 제어 버전)</title>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
@@ -209,8 +209,9 @@
 
     let selectedQuestionKey = null;
     let peer = null;
-    let connections = {}; // 호스트 입장에서 플레이어들 연결 관리
-    let masterConn = null; // 컴퓨터(마스터) 입장에서 스마트폰 호스트와의 연결
+    let connections = {}; 
+    let masterConn = null; 
+    let masterConnection = null; // 단일 마스터 중복 접속 차단용 변수
     let isMaster = false;
 
     let gameState = { 
@@ -277,16 +278,31 @@
       peer.on('connection', (conn) => {
         conn.on('data', (data) => {
           if (data.type === 'MASTER_LOGIN') {
-            // 컴퓨터가 마스터 권한으로 접속함
+            // 이미 마스터가 연결되어 있고 살아있는 경우 무조건 거절
+            if (masterConnection && masterConnection.open) {
+              conn.send({ type: 'MASTER_REJECTED', message: '이미 다른 마스터가 접속해 있습니다!' });
+              setTimeout(() => conn.close(), 100);
+              return;
+            }
+
+            // 첫 마스터 등록
+            masterConnection = conn;
             masterConn = conn;
             conn.send({ type: 'MASTER_ACK', gameState: gameState });
-            // 이후 마스터로부터 오는 제어 명령 수신
+            
             conn.on('data', (masterData) => handleMasterCommand(masterData));
           } else {
             handleHostData(conn, data);
           }
         });
-        conn.on('close', () => removePlayerFromTeams(conn.peer));
+
+        conn.on('close', () => {
+          if (masterConnection && masterConnection.peer === conn.peer) {
+            masterConnection = null;
+            masterConn = null;
+          }
+          removePlayerFromTeams(conn.peer);
+        });
       });
     }
 
@@ -310,6 +326,12 @@
         });
 
         masterConn.on('data', (data) => {
+          if (data.type === 'MASTER_REJECTED') {
+            alert(data.message);
+            masterConn.close();
+            peer.destroy();
+            return;
+          }
           if (data.type === 'MASTER_ACK') {
             gameState = data.gameState;
             document.getElementById('view-master-setup').classList.add('hidden');
@@ -327,7 +349,6 @@
       });
     }
 
-    // 마스터(컴퓨터)가 내린 명령을 스마트폰(실제 방장)이 받아 처리
     function handleMasterCommand(data) {
       if (data.action === 'START_ROUND') {
         executeStartRound(data.qKey, data.isSpyEnabled);
@@ -348,12 +369,10 @@
       }
     }
 
-    // 마스터가 제어할 때 스마트폰으로 명령을 보내는 래퍼 함수들
     function sendCommandToHost(action, payload = {}) {
       if (isMaster && masterConn) {
         masterConn.send({ action: action, ...payload });
       } else {
-        // 스마트폰 본인이 직접 누른 경우 바로 실행
         handleMasterCommand({ action: action, ...payload });
       }
     }
@@ -364,7 +383,6 @@
       }
     }
 
-    // --- 기존 호스트 로직 연동 ---
     function selectQuestion(qKey) {
       selectedQuestionKey = qKey;
       ['example', 1, 2, 3, 4, 5].forEach(key => {
