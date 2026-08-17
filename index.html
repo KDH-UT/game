@@ -3,8 +3,8 @@
 <head> 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>단어 힌트 조별 게임 (마스터 관리 및 익명 힌트 버전)</title>
-  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <title>단어 힌트 조별 게임 (마스터 관리 및 익명 힌트 버전 - 웹소켓)</title>
+  <script src="/socket.io/socket.io.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
     body { padding: 20px; background-color: #f4f7f6; text-align: center; color: #333; }
@@ -66,26 +66,26 @@
 
   <!-- 1. 메인 선택 화면 -->
   <div id="view-select" class="card">
-    <h1>실시간 단어 힌트 게임</h1>
+    <h1>실시간 단어 힌트 게임 (웹소켓 버전)</h1>
     <p style="margin: 15px 0;">모드를 선택하세요</p>
-    <button onclick="showHostSetup()">1. 스마트폰으로 방 만들기 (서버 오픈)</button><br>
-    <button onclick="showMasterJoinSetup()" style="background-color: #8e44ad;">2. 컴퓨터로 마스터(호스트) 권한 접속</button><br>
+    <button onclick="showHostSetup()">1. 서버 방 만들기 (방장 시작)</button><br>
+    <button onclick="showMasterJoinSetup()" style="background-color: #8e44ad;">2. 마스터(호스트) 권한 접속</button><br>
     <button onclick="showPlayerSetup()" style="background-color: #2ECC71;">3. 일반 참가자 접속</button>
   </div>
 
-  <!-- 스마트폰 방 생성 화면 -->
+  <!-- 방 생성 화면 -->
   <div id="view-host-setup" class="card hidden">
-    <h2>[스마트폰] 방 개설하기</h2>
-    <p style="margin: 10px 0; color:#666; font-size:14px;">버튼을 누르면 방이 열리고 코드가 생성됩니다. 이 코드를 컴퓨터나 참가자들에게 알려주세요.</p>
+    <h2>방 개설하기</h2>
+    <p style="margin: 10px 0; color:#666; font-size:14px;">버튼을 누르면 방이 열리고 코드가 생성됩니다.</p>
     <input type="number" id="teams-count" value="4" min="1" max="15" placeholder="조 개수"><br>
-    <button onclick="createRoomAsPhone()">방 생성 시작</button>
+    <button onclick="createRoomAsHost()">방 생성 시작</button>
     <br><button onclick="location.reload()" style="background-color:#7f8c8d; margin-top:10px;">뒤로 가기</button>
   </div>
 
-  <!-- 컴퓨터 마스터 로그인 화면 -->
+  <!-- 마스터 로그인 화면 -->
   <div id="view-master-setup" class="card hidden">
-    <h2>[컴퓨터] 마스터(호스트) 권한으로 들어가기</h2>
-    <input type="text" id="master-room-code" placeholder="스마트폰이 만든 방 코드 (예: ROOM-1234)"><br>
+    <h2>마스터(호스트) 권한으로 들어가기</h2>
+    <input type="text" id="master-room-code" placeholder="방 코드 (예: ROOM-1234)"><br>
     <button onclick="connectAsMaster()" style="background-color: #8e44ad;">마스터로 접속하기</button>
     <br><button onclick="location.reload()" style="background-color:#7f8c8d; margin-top:10px;">뒤로 가기</button>
   </div>
@@ -96,7 +96,6 @@
     <div id="host-dashboard">
       <h2 id="room-code-txt" style="color:#2C3E50; margin:10px 0;"></h2>
       
-      <!-- 스마트폰에서만 보이는 마스터 관리 영역 -->
       <div id="master-manager-box" style="margin: 10px 0; padding: 10px; background: #fff3cd; border-radius: 8px; border: 1px solid #ffeeba;" class="hidden">
         <h4 style="color: #856404; margin-bottom: 5px;">💻 접속 중인 마스터 관리</h4>
         <div id="connected-masters-list" style="font-size: 14px; margin-bottom: 5px;">접속한 마스터가 없습니다.</div>
@@ -214,12 +213,10 @@
     };
 
     let selectedQuestionKey = null;
-    let peer = null;
-    let connections = {}; 
-    let masterConnections = {}; // 다중 마스터 연결 관리용 객체
-    let masterConn = null; 
+    let socket = null;
+    let currentRoomCode = null;
     let isMaster = false;
-    let isPhoneHost = false;
+    let isHost = false;
 
     let gameState = { 
       teamsCount: 4, 
@@ -256,174 +253,157 @@
       document.getElementById('view-player').classList.remove('hidden');
     }
 
-    // --- 1. 스마트폰에서 방 생성 ---
-    function createRoomAsPhone() {
-      isPhoneHost = true;
+    // --- 1. 방 생성 ---
+    function createRoomAsHost() {
+      isHost = true;
       const count = parseInt(document.getElementById('teams-count').value);
-      gameState.teamsCount = count;
-      for(let i=1; i<=count; i++) {
-        gameState.teams[i] = [];
-        gameState.teamScores[i] = 0;
-        gameState.teamHistories[i] = [];
-      }
+      currentRoomCode = 'ROOM-' + Math.floor(1000 + Math.random() * 9000);
 
-      const roomId = 'ROOM-' + Math.floor(1000 + Math.random() * 9000);
-      
-      peer = new Peer(roomId, { host: '0.peerjs.com', port: 443, secure: true });
-
-      peer.on('error', (err) => {
-        alert("방 생성 오류: " + err.type);
+      socket = io();
+      socket.emit('create-room', { roomCode: currentRoomCode, teamsCount: count }, (response) => {
+        if (response.success) {
+          gameState = response.gameState;
+          document.getElementById('view-host-setup').classList.add('hidden');
+          document.getElementById('view-host').classList.remove('hidden');
+          document.getElementById('room-code-txt').innerText = `방 코드: ${currentRoomCode} (참가자에게 공유하세요)`;
+          document.getElementById('master-manager-box').classList.remove('hidden');
+          renderLeaderboard();
+          renderHostGrid();
+        } else {
+          alert("방 생성 실패: " + response.message);
+        }
       });
 
-      peer.on('open', (id) => {
-        document.getElementById('view-host-setup').classList.add('hidden');
-        document.getElementById('view-host').classList.remove('hidden');
-        document.getElementById('room-code-txt').innerText = `방 코드: ${id} (이 코드를 컴퓨터/참가자에게 공유하세요)`;
-        document.getElementById('master-manager-box').classList.remove('hidden');
-        renderLeaderboard();
-        renderHostGrid();
-        renderMasterManagerList();
-      });
-
-      peer.on('connection', (conn) => {
-        conn.on('data', (data) => {
-          if (data.type === 'MASTER_LOGIN') {
-            masterConnections[conn.peer] = { conn: conn, name: data.masterName || '마스터 PC' };
-            conn.send({ type: 'MASTER_ACK', gameState: gameState });
-            renderMasterManagerList();
-            
-            conn.on('data', (masterData) => handleMasterCommand(masterData));
-          } else {
-            handleHostData(conn, data);
-          }
-        });
-
-        conn.on('close', () => {
-          if (masterConnections[conn.peer]) {
-            delete masterConnections[conn.peer];
-            renderMasterManagerList();
-          }
-          removePlayerFromTeams(conn.peer);
-        });
-      });
+      initSocketListeners();
     }
 
-    function renderMasterManagerList() {
-      if (!isPhoneHost) return;
-      const container = document.getElementById('connected-masters-list');
-      const keys = Object.keys(masterConnections);
-      if (keys.length === 0) {
-        container.innerHTML = '<span style="color:#7f8c8d;">접속한 마스터가 없습니다.</span>';
-        return;
-      }
-      let html = '';
-      keys.forEach(peerId => {
-        html += `<div style="display: flex; justify-content: space-between; align-items: center; background: white; padding: 5px 8px; border-radius: 4px; margin-bottom: 4px; border: 1px solid #ddd;">
-          <span>💻 마스터 (${peerId.substr(0,6)}...)</span>
-          <button class="btn-danger" style="padding: 2px 6px; font-size: 11px;" onclick="kickMaster('${peerId}')">퇴출</button>
-        </div>`;
-      });
-      container.innerHTML = html;
-    }
-
-    function kickMaster(peerId) {
-      if (masterConnections[peerId]) {
-        masterConnections[peerId].conn.send({ type: 'MASTER_KICKED', message: '방장에 의해 퇴출되었습니다!' });
-        setTimeout(() => {
-          if (masterConnections[peerId]) {
-            masterConnections[peerId].conn.close();
-            delete masterConnections[peerId];
-            renderMasterManagerList();
-          }
-        }, 100);
-      }
-    }
-
-    // --- 2. 컴퓨터에서 마스터 권한으로 접속 ---
+    // --- 2. 마스터 권한 접속 ---
     function connectAsMaster() {
       const code = document.getElementById('master-room-code').value.trim().toUpperCase();
       if (!code) return alert("방 코드를 입력하세요.");
 
+      currentRoomCode = code;
       isMaster = true;
-      peer = new Peer({ host: '0.peerjs.com', port: 443, secure: true });
+      socket = io();
 
-      peer.on('error', (err) => {
-        alert("마스터 접속 실패: " + err.type);
-      });
-
-      peer.on('open', () => {
-        masterConn = peer.connect(code);
-        
-        masterConn.on('open', () => {
-          masterConn.send({ type: 'MASTER_LOGIN', masterName: '마스터PC-' + Math.floor(Math.random()*100) });
-        });
-
-        masterConn.on('data', (data) => {
-          if (data.type === 'MASTER_KICKED') {
-            alert(data.message);
-            masterConn.close();
-            peer.destroy();
-            location.reload();
-            return;
-          }
-          if (data.type === 'MASTER_ACK') {
-            gameState = data.gameState;
-            document.getElementById('view-master-setup').classList.add('hidden');
-            document.getElementById('view-host').classList.remove('hidden');
-            document.getElementById('room-code-txt').innerText = `[컴퓨터 마스터 제어 모드] 방 코드: ${code}`;
-            renderLeaderboard();
-            renderHostGrid();
-          }
-          else if (data.type === 'SYNC_STATE') {
-            gameState = data.gameState;
-            renderLeaderboard();
-            renderHostGrid();
-          }
-        });
+      socket.emit('join-master', { roomCode: code }, (response) => {
+        if (response.success) {
+          gameState = response.gameState;
+          document.getElementById('view-master-setup').classList.add('hidden');
+          document.getElementById('view-host').classList.remove('hidden');
+          document.getElementById('room-code-txt').innerText = `[마스터 제어 모드] 방 코드: ${code}`;
+          renderLeaderboard();
+          renderHostGrid();
+          initSocketListeners();
+        } else {
+          alert(response.message || "마스터 접속 실패");
+        }
       });
     }
 
-    function handleMasterCommand(data) {
-      if (data.action === 'START_ROUND') {
-        executeStartRound(data.qKey, data.isSpyEnabled);
-      } else if (data.action === 'REVEAL_HINTS') {
-        executeRevealHints();
-      } else if (data.action === 'APPROVE_ANSWER') {
-        approveAnswer(data.playerId);
-      } else if (data.action === 'REJECT_ANSWER') {
-        rejectAnswer(data.playerId);
-      } else if (data.action === 'APPROVE_HINT') {
-        approveHint(data.playerId);
-      } else if (data.action === 'REJECT_HINT') {
-        rejectHint(data.playerId);
-      } else if (data.action === 'TOGGLE_SWITCH') {
-        toggleAllowTeamSwitch();
-      } else if (data.action === 'TOGGLE_HISTORY') {
-        toggleHistoryStatus(data.teamNum, data.historyId);
-      }
+    function initSocketListeners() {
+      socket.on('sync-state', (newGameState) => {
+        gameState = newGameState;
+        renderLeaderboard();
+        renderHostGrid();
+      });
+
+      socket.on('master-kicked', (msg) => {
+        alert(msg);
+        location.reload();
+      });
+
+      socket.on('room-info', (data) => {
+        document.getElementById('player-step1').classList.add('hidden');
+        document.getElementById('player-step2').classList.remove('hidden');
+        document.getElementById('player-game').classList.add('hidden');
+        renderTeamSelectButtons(data.teamsCount, data.teamCounts);
+      });
+
+      socket.on('leaderboard-update', (data) => {
+        renderPlayerLeaderboard(data.teamsCount, data.teamScores);
+      });
+
+      socket.on('join-ack', (data) => {
+        document.getElementById('player-step2').classList.add('hidden');
+        document.getElementById('player-game').classList.remove('hidden');
+        document.getElementById('my-info').innerText = `${data.name}님 (${data.team}조)`;
+        document.getElementById('role-badge').innerText = "호스트가 라운드를 시작하길 기다리는 중...";
+      });
+
+      socket.on('round-start', (data) => {
+        isTimerStarted = false;
+        stopLiveScoreTimer();
+        document.getElementById('ui-giver').classList.add('hidden');
+        document.getElementById('ui-guesser').classList.add('hidden');
+        document.getElementById('live-score-box').classList.add('hidden');
+        document.getElementById('hint-input').value = '';
+        document.getElementById('answer-input').value = '';
+        document.getElementById('hint-msg').innerText = '';
+        document.getElementById('result-score-txt').innerText = '';
+        document.getElementById('hint-btn').disabled = false;
+        document.getElementById('ans-btn').disabled = true;
+
+        if (data.isSpy) document.getElementById('spy-alert-box').classList.remove('hidden');
+        else document.getElementById('spy-alert-box').classList.add('hidden');
+
+        if (data.isGuesser) {
+          document.getElementById('role-badge').innerText = "🎯 당신은 문제를 맞추는 사람입니다!";
+          document.getElementById('ui-guesser').classList.remove('hidden');
+          document.getElementById('hints-list').innerHTML = '<i>호스트가 익명 힌트를 일괄 공개하길 기다리는 중...</i>';
+        } else {
+          document.getElementById('role-badge').innerText = "💡 힌트를 작성해 주세요!";
+          document.getElementById('given-word').innerText = data.word;
+          const imgContainer = document.getElementById('given-image-container');
+          if (data.image) imgContainer.innerHTML = `<img src="${data.image}" alt="문제 이미지" class="hint-image">`;
+          else imgContainer.innerHTML = '';
+          document.getElementById('ui-giver').classList.remove('hidden');
+        }
+      });
+
+      socket.on('hints-revealed', (data) => {
+        isTimerStarted = true;
+        timerStartTime = data.startTime || Date.now();
+        const list = document.getElementById('hints-list');
+        list.innerHTML = data.hints.map(h => `<div style="padding: 4px 8px; margin: 3px 0; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-weight:bold; color:#2980b9;">• ${h}</div>`).join('') || '<i>제출된 힌트가 없습니다.</i>';
+        document.getElementById('ans-btn').disabled = false;
+        startLiveScoreTimer();
+      });
+
+      socket.on('hint-rejected', () => {
+        document.getElementById('hint-msg').style.color = '#d9534f';
+        document.getElementById('hint-msg').innerText = "⚠️ 힌트가 반려되었습니다. 다시 입력해주세요!";
+        document.getElementById('hint-input').value = '';
+        document.getElementById('hint-btn').disabled = false;
+      });
+
+      socket.on('answer-auto-correct', (data) => {
+        stopLiveScoreTimer();
+        document.getElementById('result-score-txt').style.color = '#27ae60';
+        document.getElementById('result-score-txt').innerText = `🎉 정답입니다! (+${data.score}점)`;
+      });
+
+      socket.on('answer-pending', () => {
+        stopLiveScoreTimer();
+        document.getElementById('result-score-txt').style.color = '#e67e22';
+        document.getElementById('result-score-txt').innerText = "정답 제출 완료 (호스트 검수 대기 중)";
+      });
+
+      socket.on('answer-approved', (data) => {
+        stopLiveScoreTimer();
+        document.getElementById('result-score-txt').style.color = '#27ae60';
+        document.getElementById('result-score-txt').innerText = `🎉 정답 승인됨! (+${data.score}점)`;
+      });
+
+      socket.on('answer-rejected', () => {
+        document.getElementById('result-score-txt').style.color = '#d9534f';
+        document.getElementById('result-score-txt').innerText = "⚠️ 오답 처리되었습니다.";
+        if (isTimerStarted) { document.getElementById('ans-btn').disabled = false; startLiveScoreTimer(); }
+      });
     }
 
     function sendCommandToHost(action, payload = {}) {
-      if (isMaster && masterConn) {
-        masterConn.send({ action: action, ...payload });
-      } else {
-        handleMasterCommand({ action: action, ...payload });
-      }
-    }
-
-    function syncToMaster() {
-      if (!isMaster && masterConn && masterConn.open) {
-        masterConn.send({ type: 'SYNC_STATE', gameState: gameState });
-      }
-      // 스마트폰 호스트인 경우 연결된 모든 마스터에게 상태 동기화 전송
-      if (isPhoneHost) {
-        Object.keys(masterConnections).forEach(peerId => {
-          const mc = masterConnections[peerId];
-          if (mc && mc.conn && mc.conn.open) {
-            mc.conn.send({ type: 'SYNC_STATE', gameState: gameState });
-          }
-        });
-      }
+      socket.emit('host-command', { roomCode: currentRoomCode, action, ...payload });
     }
 
     function selectQuestion(qKey) {
@@ -441,264 +421,25 @@
     }
 
     function toggleAllowTeamSwitch() {
-      if (isMaster) { sendCommandToHost('TOGGLE_SWITCH'); return; }
-      gameState.allowTeamSwitch = !gameState.allowTeamSwitch;
-      const btn = document.getElementById('toggle-switch-btn');
-      if (gameState.allowTeamSwitch) {
-        btn.innerText = "조 변경 허용: ON"; btn.classList.add('active');
-      } else {
-        btn.innerText = "조 변경 허용: OFF"; btn.classList.remove('active');
-      }
-      syncToMaster();
+      sendCommandToHost('TOGGLE_SWITCH');
     }
 
     function startRound() {
       if (!selectedQuestionKey) return alert("문제를 먼저 선택하세요!");
       const isSpyEnabled = document.getElementById('enable-spy-opt').checked;
-      if (isMaster) {
-        sendCommandToHost('START_ROUND', { qKey: selectedQuestionKey, isSpyEnabled: isSpyEnabled });
-      } else {
-        executeStartRound(selectedQuestionKey, isSpyEnabled);
-      }
-    }
-
-    function executeStartRound(qKey, isSpyEnabled) {
-      const qData = questionsDatabase[qKey];
-      gameState.currentWord = qData.word;
-      gameState.currentImage = qData.image;
-      gameState.roundStartTime = Date.now();
-      gameState.startTime = null;
-      
-      const wordDisplay = document.getElementById('current-word-display');
-      if(wordDisplay) wordDisplay.innerText = `현재 출제된 항목 [${qData.label}]: ${qData.word}`;
-
-      for (let t = 1; t <= gameState.teamsCount; t++) {
-        const members = gameState.teams[t];
-        if (members.length === 0) continue;
-        const guesserIndex = Math.floor(Math.random() * members.length);
-        let spyIndex = -1;
-        if (isSpyEnabled && members.length > 1) {
-          const candidateIndices = [];
-          for (let i = 0; i < members.length; i++) { if (i !== guesserIndex) candidateIndices.push(i); }
-          spyIndex = candidateIndices[Math.floor(Math.random() * candidateIndices.length)];
-        }
-
-        members.forEach((id, idx) => {
-          const isGuesser = (idx === guesserIndex);
-          const isSpy = (idx === spyIndex);
-          let spyTarget = null;
-          if (isSpy) {
-            const otherTeams = [];
-            for (let ot = 1; ot <= gameState.teamsCount; ot++) { if (ot !== t) otherTeams.push(ot); }
-            if (otherTeams.length > 0) spyTarget = otherTeams[Math.floor(Math.random() * otherTeams.length)];
-          }
-
-          gameState.players[id].isGuesser = isGuesser;
-          gameState.players[id].isSpy = isSpy;
-          gameState.players[id].targetTeamForSpy = spyTarget;
-          gameState.players[id].hint = '';
-          gameState.players[id].hintDuration = null;
-          gameState.players[id].isApproved = false;
-          gameState.players[id].answer = '';
-          gameState.players[id].pendingScore = null;
-          gameState.players[id].isCorrect = false;
-
-          if (connections[id]) {
-            connections[id].send({
-              type: 'ROUND_START',
-              word: isGuesser ? '???' : qData.word,
-              image: isGuesser ? null : qData.image,
-              isGuesser: isGuesser,
-              isSpy: isSpy
-            });
-          }
-        });
-      }
-      renderHostGrid();
-      syncToMaster();
+      sendCommandToHost('START_ROUND', { qKey: selectedQuestionKey, isSpyEnabled });
     }
 
     function revealHintsToGuessers() {
-      if (isMaster) {
-        sendCommandToHost('REVEAL_HINTS');
-      } else {
-        executeRevealHints();
-      }
+      sendCommandToHost('REVEAL_HINTS');
     }
 
-    function executeRevealHints() {
-      const now = Date.now();
-      gameState.startTime = now;
-
-      Object.keys(gameState.players).forEach(id => {
-        const p = gameState.players[id];
-        if (p.hint && !p.isApproved) p.isApproved = true;
-      });
-
-      for (let targetTeam = 1; targetTeam <= gameState.teamsCount; targetTeam++) {
-        const members = gameState.teams[targetTeam];
-        const guesserId = members.find(id => gameState.players[id].isGuesser);
-        if (!guesserId) continue;
-
-        const hintsList = [];
-        members.forEach(id => {
-          const p = gameState.players[id];
-          if (!p.isGuesser && !p.isSpy && p.hint && p.isApproved) hintsList.push(p.hint); // 익명 처리 (이름 제외)
-        });
-        Object.keys(gameState.players).forEach(id => {
-          const p = gameState.players[id];
-          if (p.isSpy && p.targetTeamForSpy === targetTeam && p.hint && p.isApproved) hintsList.push(p.hint); // 익명 처리 (이름 제외)
-        });
-
-        // 힌트 순서를 랜덤하게 섞어 누구 것인지 유추하지 못하도록 함
-        hintsList.sort(() => Math.random() - 0.5);
-
-        if (connections[guesserId]) {
-          connections[guesserId].send({ type: 'HINTS_REVEALED', hints: hintsList, startTime: now });
-        }
-      }
-      renderHostGrid();
-      syncToMaster();
-      alert("모든 익명 힌트가 공개되고 타이머가 시작되었습니다!");
-    }
-
-    function broadcastLeaderboard() {
-      const payload = { type: 'LEADERBOARD_UPDATE', teamsCount: gameState.teamsCount, teamScores: gameState.teamScores };
-      Object.keys(connections).forEach(id => {
-        if (connections[id] && connections[id].open) connections[id].send(payload);
-      });
-    }
-
-    function removePlayerFromTeams(playerId) {
-      for (let i = 1; i <= gameState.teamsCount; i++) {
-        const idx = gameState.teams[i].indexOf(playerId);
-        if (idx !== -1) gameState.teams[i].splice(idx, 1);
-      }
-    }
-
-    function handleHostData(conn, data) {
-      connections[conn.peer] = conn;
-      if (data.type === 'GET_ROOM_INFO') {
-        const teamCounts = {};
-        for (let i = 1; i <= gameState.teamsCount; i++) teamCounts[i] = gameState.teams[i].length;
-        conn.send({ type: 'ROOM_INFO', teamsCount: gameState.teamsCount, teamCounts: teamCounts, allowSwitch: gameState.allowTeamSwitch, isChanging: data.isChanging || false });
-        conn.send({ type: 'LEADERBOARD_UPDATE', teamsCount: gameState.teamsCount, teamScores: gameState.teamScores });
-      }
-      else if (data.type === 'JOIN_TEAM') {
-        removePlayerFromTeams(conn.peer);
-        const targetTeam = data.team;
-        gameState.players[conn.peer] = { id: conn.peer, name: data.name, team: targetTeam, isGuesser: false, isSpy: false, targetTeamForSpy: null, hint: '', hintDuration: null, isApproved: false, answer: '', pendingScore: null, isCorrect: false };
-        gameState.teams[targetTeam].push(conn.peer);
-        conn.send({ type: 'JOIN_ACK', team: targetTeam, name: data.name });
-        renderHostGrid();
-        syncToMaster();
-      } 
-      else if (data.type === 'HINT_SUBMIT') {
-        const p = gameState.players[conn.peer];
-        if (p) {
-          p.hint = data.hint; p.isApproved = false;
-          if (gameState.roundStartTime) p.hintDuration = ((Date.now() - gameState.roundStartTime) / 1000).toFixed(1);
-        }
-        renderHostGrid();
-        syncToMaster();
-      }
-      else if (data.type === 'ANSWER_SUBMIT') {
-        const player = gameState.players[conn.peer];
-        if (!gameState.startTime) return;
-        if (player) {
-          const elapsed = (Date.now() - gameState.startTime) / 1000;
-          const score = calculateScore(elapsed);
-          player.answer = data.answer; player.pendingScore = score;
-          const cleanSubmitted = data.answer.replace(/\s+/g, '').toLowerCase();
-          const cleanTarget = gameState.currentWord.replace(/\s+/g, '').toLowerCase();
-          const isMatched = (cleanTarget && cleanSubmitted === cleanTarget);
-
-          if (isMatched) {
-            player.isCorrect = true;
-            gameState.teamScores[player.team] += score;
-            conn.send({ type: 'ANSWER_AUTO_CORRECT', score: score });
-            renderLeaderboard();
-            broadcastLeaderboard();
-          } else {
-            conn.send({ type: 'ANSWER_PENDING' });
-          }
-          gameState.teamHistories[player.team].push({
-            id: 'HIST-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
-            playerId: player.id, playerName: player.name, team: player.team,
-            targetWord: gameState.currentWord, submittedAnswer: data.answer, score: score, isCorrect: isMatched, timestamp: new Date().toLocaleTimeString()
-          });
-        }
-        renderHostGrid();
-        syncToMaster();
-      }
-    }
-
-    function approveAnswer(playerId) {
-      if (isMaster) { sendCommandToHost('APPROVE_ANSWER', { playerId: playerId }); return; }
-      const player = gameState.players[playerId];
-      if (!player || player.isCorrect) return;
-      player.isCorrect = true;
-      const gainedScore = player.pendingScore || 0;
-      gameState.teamScores[player.team] += gainedScore;
-      const teamHist = gameState.teamHistories[player.team];
-      if (teamHist) {
-        const entry = teamHist.slice().reverse().find(h => h.playerId === playerId && h.submittedAnswer === player.answer);
-        if (entry) entry.isCorrect = true;
-      }
-      if (connections[playerId]) connections[playerId].send({ type: 'ANSWER_APPROVED', score: gainedScore });
-      renderLeaderboard(); broadcastLeaderboard(); renderHostGrid(); syncToMaster();
-    }
-
-    function rejectAnswer(playerId) {
-      if (isMaster) { sendCommandToHost('REJECT_ANSWER', { playerId: playerId }); return; }
-      const player = gameState.players[playerId];
-      if (!player) return;
-      if (player.isCorrect) {
-        const deductedScore = player.pendingScore || 0;
-        gameState.teamScores[player.team] = Math.max(0, gameState.teamScores[player.team] - deductedScore);
-      }
-      player.isCorrect = false;
-      const teamHist = gameState.teamHistories[player.team];
-      if (teamHist) {
-        const entry = teamHist.slice().reverse().find(h => h.playerId === playerId && h.submittedAnswer === player.answer);
-        if (entry) entry.isCorrect = false;
-      }
-      if (connections[playerId]) connections[playerId].send({ type: 'ANSWER_REJECTED' });
-      renderLeaderboard(); broadcastLeaderboard(); renderHostGrid(); syncToMaster();
-    }
-
-    function toggleHistoryStatus(teamNum, historyId) {
-      if (isMaster) { sendCommandToHost('TOGGLE_HISTORY', { teamNum: teamNum, historyId: historyId }); return; }
-      const entry = gameState.teamHistories[teamNum].find(h => h.id === historyId);
-      if (!entry) return;
-      if (entry.isCorrect) {
-        entry.isCorrect = false;
-        gameState.teamScores[teamNum] = Math.max(0, gameState.teamScores[teamNum] - entry.score);
-        if (connections[entry.playerId]) connections[entry.playerId].send({ type: 'ANSWER_REJECTED' });
-      } else {
-        entry.isCorrect = true;
-        gameState.teamScores[teamNum] += entry.score;
-        if (connections[entry.playerId]) connections[entry.playerId].send({ type: 'ANSWER_APPROVED', score: entry.score });
-      }
-      renderLeaderboard(); broadcastLeaderboard(); renderHostGrid(); syncToMaster(); openHistoryModal(teamNum);
-    }
-
-    function approveHint(playerId) {
-      if (isMaster) { sendCommandToHost('APPROVE_HINT', { playerId: playerId }); return; }
-      const player = gameState.players[playerId];
-      if (!player) return;
-      player.isApproved = true;
-      renderHostGrid(); syncToMaster();
-    }
-
-    function rejectHint(playerId) {
-      if (isMaster) { sendCommandToHost('REJECT_HINT', { playerId: playerId }); return; }
-      const player = gameState.players[playerId];
-      if (!player) return;
-      player.hint = ''; player.hintDuration = null; player.isApproved = false;
-      renderHostGrid(); syncToMaster();
-      if (connections[playerId]) connections[playerId].send({ type: 'HINT_REJECTED' });
-    }
+    function approveAnswer(playerId) { sendCommandToHost('APPROVE_ANSWER', { playerId }); }
+    function rejectAnswer(playerId) { sendCommandToHost('REJECT_ANSWER', { playerId }); }
+    function toggleHistoryStatus(teamNum, historyId) { sendCommandToHost('TOGGLE_HISTORY', { teamNum, historyId }); }
+    function approveHint(playerId) { sendCommandToHost('APPROVE_HINT', { playerId }); }
+    function rejectHint(playerId) { sendCommandToHost('REJECT_HINT', { playerId }); }
+    function kickMaster(peerId) { sendCommandToHost('KICK_MASTER', { masterId: peerId }); }
 
     function renderLeaderboard() {
       const board = document.getElementById('leaderboard');
@@ -777,10 +518,27 @@
         html += `</div>`;
         grid.innerHTML += html;
       }
+
+      // 마스터 관리 리스트 렌더링
+      const masterContainer = document.getElementById('connected-masters-list');
+      if (masterContainer && gameState.masters) {
+        const keys = Object.keys(gameState.masters);
+        if (keys.length === 0) {
+          masterContainer.innerHTML = '<span style="color:#7f8c8d;">접속한 마스터가 없습니다.</span>';
+        } else {
+          let mHtml = '';
+          keys.forEach(mId => {
+            mHtml += `<div style="display: flex; justify-content: space-between; align-items: center; background: white; padding: 5px 8px; border-radius: 4px; margin-bottom: 4px; border: 1px solid #ddd;">
+              <span>💻 마스터 (${mId.substr(0,6)}...)</span>
+              <button class="btn-danger" style="padding: 2px 6px; font-size: 11px;" onclick="kickMaster('${mId}')">퇴출</button>
+            </div>`;
+          });
+          masterContainer.innerHTML = mHtml;
+        }
+      }
     }
 
     // --- 참가자 로직 ---
-    let myConn = null;
     let selectedTeam = null;
     let isTimerStarted = false;
     let scoreTimerInterval = null;
@@ -791,91 +549,14 @@
       const name = document.getElementById('nickname').value.trim();
       if (!code || !name) return alert("방 코드와 이름을 모두 입력하세요.");
 
-      peer = new Peer({ host: '0.peerjs.com', port: 443, secure: true });
-      peer.on('open', () => {
-        myConn = peer.connect(code);
-        myConn.on('open', () => { myConn.send({ type: 'GET_ROOM_INFO', isChanging: false }); });
-        myConn.on('data', (data) => {
-          if (data.type === 'ROOM_INFO') {
-            document.getElementById('player-step1').classList.add('hidden');
-            document.getElementById('player-step2').classList.remove('hidden');
-            document.getElementById('player-game').classList.add('hidden');
-            renderTeamSelectButtons(data.teamsCount, data.teamCounts);
-          }
-          else if (data.type === 'LEADERBOARD_UPDATE') {
-            renderPlayerLeaderboard(data.teamsCount, data.teamScores);
-          }
-          else if (data.type === 'JOIN_ACK') {
-            document.getElementById('player-step2').classList.add('hidden');
-            document.getElementById('player-game').classList.remove('hidden');
-            document.getElementById('my-info').innerText = `${data.name}님 (${data.team}조)`;
-            document.getElementById('role-badge').innerText = "호스트가 라운드를 시작하길 기다리는 중...";
-          }
-          else if (data.type === 'ROUND_START') {
-            isTimerStarted = false;
-            stopLiveScoreTimer();
-            document.getElementById('ui-giver').classList.add('hidden');
-            document.getElementById('ui-guesser').classList.add('hidden');
-            document.getElementById('live-score-box').classList.add('hidden');
-            document.getElementById('hint-input').value = '';
-            document.getElementById('answer-input').value = '';
-            document.getElementById('hint-msg').innerText = '';
-            document.getElementById('result-score-txt').innerText = '';
-            document.getElementById('hint-btn').disabled = false;
-            document.getElementById('ans-btn').disabled = true;
+      currentRoomCode = code;
+      socket = io();
+      initSocketListeners();
 
-            if (data.isSpy) document.getElementById('spy-alert-box').classList.remove('hidden');
-            else document.getElementById('spy-alert-box').classList.add('hidden');
-
-            if (data.isGuesser) {
-              document.getElementById('role-badge').innerText = "🎯 당신은 문제를 맞추는 사람입니다!";
-              document.getElementById('ui-guesser').classList.remove('hidden');
-              document.getElementById('hints-list').innerHTML = '<i>호스트가 익명 힌트를 일괄 공개하길 기다리는 중...</i>';
-            } else {
-              document.getElementById('role-badge').innerText = "💡 힌트를 작성해 주세요!";
-              document.getElementById('given-word').innerText = data.word;
-              const imgContainer = document.getElementById('given-image-container');
-              if (data.image) imgContainer.innerHTML = `<img src="${data.image}" alt="문제 이미지" class="hint-image">`;
-              else imgContainer.innerHTML = '';
-              document.getElementById('ui-giver').classList.remove('hidden');
-            }
-          }
-          else if (data.type === 'HINTS_REVEALED') {
-            isTimerStarted = true;
-            timerStartTime = data.startTime || Date.now();
-            const list = document.getElementById('hints-list');
-            // 익명으로 힌트만 출력 (작성자 이름 미표시)
-            list.innerHTML = data.hints.map(h => `<div style="padding: 4px 8px; margin: 3px 0; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-weight:bold; color:#2980b9;">• ${h}</div>`).join('') || '<i>제출된 힌트가 없습니다.</i>';
-            document.getElementById('ans-btn').disabled = false;
-            startLiveScoreTimer();
-          }
-          else if (data.type === 'HINT_REJECTED') {
-            document.getElementById('hint-msg').style.color = '#d9534f';
-            document.getElementById('hint-msg').innerText = "⚠️ 힌트가 반려되었습니다. 다시 입력해주세요!";
-            document.getElementById('hint-input').value = '';
-            document.getElementById('hint-btn').disabled = false;
-          }
-          else if (data.type === 'ANSWER_AUTO_CORRECT') {
-            stopLiveScoreTimer();
-            document.getElementById('result-score-txt').style.color = '#27ae60';
-            document.getElementById('result-score-txt').innerText = `🎉 정답입니다! (+${data.score}점)`;
-          }
-          else if (data.type === 'ANSWER_PENDING') {
-            stopLiveScoreTimer();
-            document.getElementById('result-score-txt').style.color = '#e67e22';
-            document.getElementById('result-score-txt').innerText = "정답 제출 완료 (호스트 검수 대기 중)";
-          }
-          else if (data.type === 'ANSWER_APPROVED') {
-            stopLiveScoreTimer();
-            document.getElementById('result-score-txt').style.color = '#27ae60';
-            document.getElementById('result-score-txt').innerText = `🎉 정답 승인됨! (+${data.score}점)`;
-          }
-          else if (data.type === 'ANSWER_REJECTED') {
-            document.getElementById('result-score-txt').style.color = '#d9534f';
-            document.getElementById('result-score-txt').innerText = "⚠️ 오답 처리되었습니다.";
-            if (isTimerStarted) { document.getElementById('ans-btn').disabled = false; startLiveScoreTimer(); }
-          }
-        });
+      socket.emit('get-room-info', { roomCode: code, isChanging: false }, (response) => {
+        if (!response.success) {
+          alert(response.message || "방을 찾을 수 없습니다.");
+        }
       });
     }
 
@@ -928,18 +609,18 @@
     function joinSelectedTeam() {
       if (!selectedTeam) return alert("조를 선택하세요!");
       const name = document.getElementById('nickname').value.trim();
-      myConn.send({ type: 'JOIN_TEAM', name: name, team: selectedTeam });
+      socket.emit('join-team', { roomCode: currentRoomCode, name, team: selectedTeam });
     }
 
     function requestTeamChange() {
-      if (myConn) myConn.send({ type: 'GET_ROOM_INFO', isChanging: true });
+      socket.emit('get-room-info', { roomCode: currentRoomCode, isChanging: true });
     }
 
     function sendHint() {
       const hint = document.getElementById('hint-input').value.trim();
       if (!hint) return alert("힌트를 입력하세요.");
       if (hint.split(/\s+/).length > 2) return alert("힌트는 최대 2단어까지만 가능합니다!");
-      myConn.send({ type: 'HINT_SUBMIT', hint: hint });
+      socket.emit('hint-submit', { roomCode: currentRoomCode, hint });
       document.getElementById('hint-msg').style.color = '#2ECC71';
       document.getElementById('hint-msg').innerText = "힌트 전송 완료 (대기 중)";
     }
@@ -948,7 +629,7 @@
       if (!isTimerStarted) return alert("타이머가 시작되지 않았습니다.");
       const ans = document.getElementById('answer-input').value.trim();
       if (!ans) return alert("정답을 입력하세요.");
-      myConn.send({ type: 'ANSWER_SUBMIT', answer: ans });
+      socket.emit('answer-submit', { roomCode: currentRoomCode, answer: ans });
       document.getElementById('ans-btn').disabled = true;
       stopLiveScoreTimer();
     }
