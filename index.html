@@ -1,1 +1,254 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head> 
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>단어 힌트 조별 게임 (정적 배포 - Firebase 버전)</title>
+  <!-- Firebase SDK 로드 -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+    // 👉 본인의 Firebase 프로젝트 설정 정보로 수정하세요!
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_AUTH_DOMAIN",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_STORAGE_BUCKET",
+      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // 전역으로 함수 노출
+    window.db = db;
+    window.firebaseFns = { doc, setDoc, getDoc, updateDoc, onSnapshot };
+  </script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+    body { padding: 20px; background-color: #f4f7f6; text-align: center; color: #333; }
+    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 1000px; margin: 0 auto 20px; }
+    button { padding: 10px 18px; font-size: 15px; font-weight: bold; border: none; border-radius: 6px; background-color: #4A90E2; color: white; cursor: pointer; margin: 3px; }
+    button:hover { background-color: #357ABD; }
+    button:disabled { background-color: #ccc !important; cursor: not-allowed; }
+    .btn-approve { background-color: #2ECC71; font-size: 12px; padding: 4px 8px; }
+    .btn-danger { background-color: #d9534f; font-size: 12px; padding: 4px 8px; }
+    .btn-action { background-color: #e67e22; font-size: 16px; padding: 12px 24px; }
+    input { padding: 10px; font-size: 16px; border: 1px solid #ddd; border-radius: 6px; margin: 5px; width: 80%; max-width: 300px; }
+    
+    .team-select-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; margin: 15px 0; }
+    .btn-team-select { background-color: #f8f9fa; color: #333; border: 2px solid #4A90E2; padding: 12px; border-radius: 8px; font-size: 15px; cursor: pointer; }
+    .btn-team-select.active { background-color: #4A90E2; color: white; }
+
+    .question-grid { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    .btn-question { background-color: #8e44ad; font-size: 15px; padding: 10px 16px; }
+    .btn-question.selected { background-color: #27ae60; border: 2px solid #fff; }
+    .btn-example { background-color: #16a085; }
+
+    .leaderboard { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 15px 0; background: #2C3E50; padding: 12px; border-radius: 8px; color: white; }
+    .leaderboard-item { background: #34495E; padding: 8px 12px; border-radius: 6px; font-weight: bold; font-size: 14px; }
+    .leaderboard-item span { color: #2ECC71; }
+
+    .teams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; margin-top: 15px; }
+    .team-card { border: 2px solid #e0e0e0; border-radius: 8px; padding: 10px; background: #fafafa; text-align: left; }
+    .team-card h4 { border-bottom: 2px solid #4A90E2; padding-bottom: 5px; margin-bottom: 8px; color: #4A90E2; display: flex; justify-content: space-between; }
+    .player-item { padding: 6px; font-size: 14px; border-bottom: 1px dashed #eee; border-radius: 4px; margin-bottom: 2px; }
+    
+    .word-display { font-size: 28px; font-weight: bold; color: #e67e22; margin: 15px 0; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- 1. 메인 선택 화면 -->
+  <div id="view-select" class="card">
+    <h1>실시간 단어 힌트 게임 (정적 페이지 버전)</h1>
+    <p style="margin: 15px 0;">모드를 선택하세요</p>
+    <button onclick="showHostSetup()">1. 방 만들기 (호스트 시작)</button><br>
+    <button onclick="showPlayerSetup()" style="background-color: #2ECC71;">2. 참가자 접속</button>
+  </div>
+
+  <!-- 방 생성 화면 -->
+  <div id="view-host-setup" class="card hidden">
+    <h2>방 개설하기</h2>
+    <input type="number" id="teams-count" value="4" min="1" max="15" placeholder="조 개수"><br>
+    <button onclick="createRoomAsHost()">방 생성 시작</button>
+    <br><button onclick="location.reload()" style="background-color:#7f8c8d; margin-top:10px;">뒤로 가기</button>
+  </div>
+
+  <!-- 호스트 제어판 -->
+  <div id="view-host" class="card hidden">
+    <h2>[호스트 제어판] 게임 관리</h2>
+    <h2 id="room-code-txt" style="color:#2C3E50; margin:10px 0;"></h2>
+    <h3>🏆 조별 누적 점수판</h3>
+    <div id="leaderboard" class="leaderboard"></div>
+
+    <div style="margin: 20px 0; padding: 15px; background: #eef6ff; border-radius: 8px;">
+      <p style="margin-bottom: 8px; font-weight: bold; color: #2c3e50;">출제할 문제를 선택하세요</p>
+      <div class="question-grid">
+        <button class="btn-question btn-example" onclick="selectQuestion('example')">예제</button>
+        <button class="btn-question" onclick="selectQuestion(1)">1번</button>
+        <button class="btn-question" onclick="selectQuestion(2)">2번</button>
+      </div>
+      <div id="selected-question-preview" style="margin: 10px 0; font-weight: bold; color: #e67e22;">선택된 문제 없음</div>
+      <button class="btn-action" onclick="startRound()">라운드 시작</button>
+    </div>
+
+    <h3>실시간 조별 현황</h3>
+    <div id="teams-grid" class="teams-grid"></div>
+  </div>
+
+  <!-- 참가자 화면 -->
+  <div id="view-player" class="card hidden">
+    <h2>[참가자] 게임 참가</h2>
+    <div id="player-step1">
+      <input type="text" id="room-code" placeholder="방 코드 (예: ROOM-1234)"><br>
+      <input type="text" id="nickname" placeholder="이름(닉네임) 입력"><br>
+      <button onclick="connectRoom()" style="background-color: #2ECC71;">다음 (조 선택)</button>
+    </div>
+
+    <div id="player-step2" class="hidden">
+      <h3>참가할 조를 선택하세요</h3>
+      <div id="team-select-buttons" class="team-select-grid"></div>
+      <button id="btn-join-final" onclick="joinSelectedTeam()" style="background-color: #2ECC71;" disabled>조 접속하기</button>
+    </div>
+
+    <div id="player-game" class="hidden">
+      <h3 id="my-info"></h3>
+      <h2 id="role-badge" style="margin: 15px 0;"></h2>
+      <div id="ui-giver" class="hidden">
+        <p>제시어: <strong id="given-word" style="font-size: 24px; color:#e67e22;">-</strong></p>
+        <input type="text" id="hint-input" placeholder="힌트 입력"><br>
+        <button onclick="sendHint()">힌트 전송</button>
+      </div>
+      <div id="ui-guesser" class="hidden">
+        <p style="color: #d9534f; font-weight: bold;">문제를 맞추는 사람입니다!</p>
+        <input type="text" id="answer-input" placeholder="정답 입력"><br>
+        <button onclick="sendAnswer()" style="background-color: #e67e22;">정답 제출</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentRoomCode = null;
+    let myPlayerId = 'ID-' + Math.random().toString(36).substr(2, 9);
+    let selectedTeam = null;
+    let selectedQKey = null;
+
+    function showHostSetup() {
+      document.getElementById('view-select').classList.add('hidden');
+      document.getElementById('view-host-setup').classList.remove('hidden');
+    }
+    function showPlayerSetup() {
+      document.getElementById('view-select').classList.add('hidden');
+      document.getElementById('view-player').classList.remove('hidden');
+    }
+
+    async function createRoomAsHost() {
+      const teamsCount = parseInt(document.getElementById('teams-count').value);
+      currentRoomCode = 'ROOM-' + Math.floor(1000 + Math.random() * 9000);
+      
+      const initialGameState = {
+        teamsCount,
+        teams: {},
+        players: {},
+        teamScores: {},
+        currentWord: ''
+      };
+      for(let i=1; i<=teamsCount; i++) {
+        initialGameState.teams[i] = [];
+        initialGameState.teamScores[i] = 0;
+      }
+
+      const { doc, setDoc } = window.firebaseFns;
+      await setDoc(doc(window.db, "rooms", currentRoomCode), initialGameState);
+
+      document.getElementById('view-host-setup').classList.add('hidden');
+      document.getElementById('view-host').classList.remove('hidden');
+      document.getElementById('room-code-txt').innerText = `방 코드: ${currentRoomCode}`;
+      
+      listenRoomState();
+    }
+
+    async function connectRoom() {
+      currentRoomCode = document.getElementById('room-code').value.trim().toUpperCase();
+      const name = document.getElementById('nickname').value.trim();
+      if(!currentRoomCode || !name) return alert("정보를 모두 입력하세요.");
+
+      const { doc, getDoc } = window.firebaseFns;
+      const snap = await getDoc(doc(window.db, "rooms", currentRoomCode));
+      if(!snap.exists()) return alert("존재하지 않는 방입니다.");
+
+      const data = snap.data();
+      document.getElementById('player-step1').classList.add('hidden');
+      document.getElementById('player-step2').classList.remove('hidden');
+
+      const container = document.getElementById('team-select-buttons');
+      container.innerHTML = '';
+      for(let i=1; i<=data.teamsCount; i++) {
+        const btn = document.createElement('button');
+        btn.className = 'btn-team-select';
+        btn.innerText = `${i}조`;
+        btn.onclick = () => {
+          selectedTeam = i;
+          document.querySelectorAll('.btn-team-select').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          document.getElementById('btn-join-final').disabled = false;
+        };
+        container.append(btn);
+      }
+      listenRoomState();
+    }
+
+    async function joinSelectedTeam() {
+      const name = document.getElementById('nickname').value.trim();
+      const { doc, getDoc, updateDoc } = window.firebaseFns;
+      const roomRef = doc(window.db, "rooms", currentRoomCode);
+      const snap = await getDoc(roomRef);
+      const data = snap.data();
+
+      data.players[myPlayerId] = { name, team: selectedTeam, hint: '', answer: '', isGuesser: false };
+      data.teams[selectedTeam].push(myPlayerId);
+
+      await updateDoc(roomRef, { players: data.players, teams: data.teams });
+
+      document.getElementById('player-step2').classList.add('hidden');
+      document.getElementById('player-game').classList.remove('hidden');
+      document.getElementById('my-info').innerText = `${name}님 (${selectedTeam}조)`;
+    }
+
+    function listenRoomState() {
+      const { doc, onSnapshot } = window.firebaseFns;
+      onSnapshot(doc(window.db, "rooms", currentRoomCode), (docSnap) => {
+        if(!docSnap.exists()) return;
+        const state = docSnap.data();
+        
+        // 리더보드 렌더링
+        const lb = document.getElementById('leaderboard');
+        if(lb) {
+          lb.innerHTML = '';
+          for(let i=1; i<=state.teamsCount; i++) {
+            lb.innerHTML += `<div class="leaderboard-item">${i}조: <span>${state.teamScores[i] || 0}점</span></div>`;
+          }
+        }
+      });
+    }
+
+    function selectQuestion(qKey) {
+      selectedQKey = qKey;
+      document.getElementById('selected-question-preview').innerText = `선택된 문제: ${qKey}`;
+    }
+
+    async function startRound() {
+      const words = { 'example': '김동환', 1: '사과', 2: 'CIS' };
+      const word = words[selectedQKey] || '기본단어';
+      const { doc, updateDoc } = window.firebaseFns;
+      await updateDoc(doc(window.db, "rooms", currentRoomCode), { currentWord: word });
+      alert("라운드가 시작되었습니다!");
+    }
+  </script>
+</body>
+</html>
